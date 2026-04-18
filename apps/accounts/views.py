@@ -1,15 +1,15 @@
 from django.shortcuts import get_object_or_404
+from django.conf import settings
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes, parser_classes, authentication_classes
-from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
 from rest_framework.response import Response
 from django.contrib.auth import authenticate
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
-
 from .models import User
 from .serializers import (
     RegisterSerializer, LoginSerializer, OTPVerifySerializer, SendOTPSerializer,
@@ -19,7 +19,8 @@ from .serializers import (
 from .utils import create_otp, send_otp_email, verify_otp, get_tokens_for_user, get_activity_summary
 from apps.subscriptions.utils import create_default_subscription
 from apps.subscriptions.serializers import SubscriptionSerializer
-
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
 
 
 # ═══════════════════════════════════════════════════════
@@ -32,7 +33,7 @@ from apps.subscriptions.serializers import SubscriptionSerializer
     operation_description="Creates a new user account and sends a verification OTP to the email.",
     request_body=RegisterSerializer,
     responses={201: "User registered. OTP sent to email.", 400: "Validation error"},
-    tags=["Auth"],
+    tags=["auth"],
 )
 @api_view(["POST"])
 def register(request):
@@ -59,7 +60,7 @@ def register(request):
     operation_summary="Verify email OTP",
     request_body=OTPVerifySerializer,
     responses={200: "Email verified successfully.", 400: "Invalid or expired OTP"},
-    tags=["Auth"],
+    tags=["auth"],
 )
 @api_view(["POST"])
 def verify_email(request):
@@ -87,7 +88,7 @@ def verify_email(request):
     operation_description="Authenticate with email and password. Returns JWT tokens.",
     request_body=LoginSerializer,
     responses={200: "Login successful", 400: "Invalid credentials"},
-    tags=["Auth"],
+    tags=["auth"],
 )
 @api_view(["POST"])
 def login(request):
@@ -123,7 +124,7 @@ def login(request):
         },
     ),
     responses={200: "OTP resent.", 404: "User not found."},
-    tags=["Auth"],
+    tags=["auth"],
 )
 @api_view(["POST"])
 def resend_otp(request):
@@ -147,7 +148,7 @@ def resend_otp(request):
     operation_summary="Send password reset OTP",
     request_body=SendOTPSerializer,
     responses={200: "OTP sent if email is registered."},
-    tags=["Auth"],
+    tags=["auth"],
 )
 @api_view(["POST"])
 def send_password_reset_otp(request):
@@ -170,7 +171,7 @@ def send_password_reset_otp(request):
     operation_summary="Verify password reset OTP",
     request_body=OTPVerifySerializer,
     responses={200: "OTP is valid.", 400: "Invalid OTP"},
-    tags=["Auth"],
+    tags=["auth"],
 )
 @api_view(["POST"])
 def verify_password_reset_otp(request):
@@ -191,7 +192,7 @@ def verify_password_reset_otp(request):
     operation_summary="Reset password",
     request_body=ResetPasswordSerializer,
     responses={200: "Password reset successfully.", 400: "Validation error"},
-    tags=["Auth"],
+    tags=["auth"],
 )
 @api_view(["POST"])
 def reset_password(request):
@@ -291,4 +292,123 @@ def change_password(request):
 @authentication_classes([JWTAuthentication])
 def delete_account(request):
     request.user.delete()
+    return Response({"message": "Account deleted successfully."}, status=status.HTTP_200_OK)
+
+
+
+@swagger_auto_schema(
+    method="post",
+    operation_summary="Google Login",
+    operation_description="Send id_token from Google Sign-In SDK. Returns JWT tokens.",
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=["id_token"],
+        properties={
+            "id_token": openapi.Schema(type=openapi.TYPE_STRING, description="ID token from Google SDK"),
+        }
+    ),
+    responses={200: "Login successful", 400: "Invalid token"},
+    tags=["auth"],
+)
+@api_view(["POST"])
+def google_login(request):
+    token = request.data.get("id_token")
+    if not token:
+        return Response({"detail": "id_token required."}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        idinfo = id_token.verify_oauth2_token(
+            token, google_requests.Request(), settings.GOOGLE_CLIENT_ID
+        )
+    except ValueError:
+        return Response({"detail": "Invalid token."}, status=status.HTTP_400_BAD_REQUEST)
+
+    email = idinfo.get("email")
+    name = idinfo.get("name", "")
+    picture = idinfo.get("picture", None)
+
+    user, created = User.objects.get_or_create(
+        email=email,
+        defaults={"name": name, "is_email_verified": True}
+    )
+
+    tokens = get_tokens_for_user(user)
+    return Response({
+        "message": "Login successful.",
+        "access": tokens["access"],
+        "refresh": tokens["refresh"],
+        "user": UserSerializer(user).data,
+    })
+
+
+@swagger_auto_schema(
+    method="post",
+    operation_summary="Apple Login",
+    operation_description="Send id_token from Apple Sign-In SDK. Returns JWT tokens.",
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=["id_token"],
+        properties={
+            "id_token": openapi.Schema(type=openapi.TYPE_STRING, description="ID token from Apple SDK"),
+            "name": openapi.Schema(type=openapi.TYPE_STRING, description="User name (only on first login)"),
+        }
+    ),
+    responses={200: "Login successful", 400: "Invalid token"},
+    tags=["auth"],
+)
+@api_view(["POST"])
+def apple_login(request):
+    from jwt import PyJWKClient
+    from jwt import decode as jwt_decode
+
+    id_token_str = request.data.get("id_token")
+    if not id_token_str:
+        return Response({"detail": "id_token required."}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        jwks_client = PyJWKClient("https://appleid.apple.com/auth/keys")
+        signing_key = jwks_client.get_signing_key_from_jwt(id_token_str)
+        payload = jwt_decode(
+            id_token_str,
+            signing_key.key,
+            algorithms=["RS256"],
+            audience=settings.APPLE_CLIENT_ID,
+        )
+    except Exception:
+        return Response({"detail": "Invalid token."}, status=status.HTTP_400_BAD_REQUEST)
+
+    email = payload.get("email")
+    if not email:
+        return Response({"detail": "Email not found in token."}, status=status.HTTP_400_BAD_REQUEST)
+
+    name = request.data.get("name", email.split("@")[0])
+
+    user, created = User.objects.get_or_create(
+        email=email,
+        defaults={"name": name, "is_email_verified": True}
+    )
+
+    tokens = get_tokens_for_user(user)
+    return Response({
+        "message": "Login successful.",
+        "access": tokens["access"],
+        "refresh": tokens["refresh"],
+        "user": UserSerializer(user).data,
+    })
+    
+    
+@swagger_auto_schema(
+    method="delete",
+    operation_summary="Delete account",
+    operation_description="Permanently deletes the authenticated user's account.",
+    responses={200: "Account deleted", 401: "Unauthorized"},
+    tags=["auth"],
+    security=[{"Bearer": []}],
+)
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+@authentication_classes([JWTAuthentication])
+def delete_account(request):
+    user = request.user
+    user.delete()
     return Response({"message": "Account deleted successfully."}, status=status.HTTP_200_OK)

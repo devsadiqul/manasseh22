@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     'apps.tasks',
     'apps.legal',
     'apps.notifications',
+    'apps.dashboard',
 ]
 
 MIDDLEWARE = [
@@ -169,3 +170,8 @@ SWAGGER_SETTINGS = {
         }
     },
 }
+
+
+# Social authentication client IDs (for Google and Apple sign-in)
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+APPLE_CLIENT_ID = os.getenv("APPLE_CLIENT_ID")

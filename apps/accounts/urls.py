@@ -14,6 +14,9 @@ urlpatterns = [
     path("auth/forgot-password/send-otp/", views.send_password_reset_otp, name="auth-forgot-send-otp"),
     path("auth/forgot-password/verify-otp/", views.verify_password_reset_otp, name="auth-forgot-verify-otp"),
     path("auth/forgot-password/reset/", views.reset_password, name="auth-reset-password"),
+    path("auth/google/", views.google_login, name="google-login"),
+    path("auth/apple/", views.apple_login, name="apple-login"),
+    path("auth/delete-account/", views.delete_account, name="delete-account"),
 
     # Profile
     path("profile/", views.get_profile, name="profile-get"),
