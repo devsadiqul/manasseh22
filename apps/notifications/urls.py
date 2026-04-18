@@ -4,7 +4,7 @@ from . import views
 
 # Create your urls here.
 urlpatterns = [
-    path("notifications/", views.NotificationListView.as_view(), name="notifications"),
-    path("notifications/read-all/", views.MarkAllNotificationsReadView.as_view(), name="notifications-read-all"),
-    path("notifications/<uuid:notification_id>/read/", views.MarkNotificationReadView.as_view(), name="notification-read"),
+    path("notifications/", views.notification_list, name="notification-list"),
+    path("notifications/mark-all-read/", views.notification_mark_all_read, name="notification-mark-all-read"),
+    path("notifications/<uuid:notification_id>/mark-read/", views.notification_mark_read, name="notification-mark-read"),
 ]

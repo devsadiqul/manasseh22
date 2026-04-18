@@ -12,30 +12,39 @@ class Subscription(models.Model):
     BILLING_CYCLE_CHOICES = [
         ("monthly", "Monthly"),
         ("yearly", "Yearly"),
+        ("forever", "Forever"),
     ]
-    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="subscription")
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="subscription"
+    )
     plan = models.CharField(max_length=20, choices=PLAN_CHOICES, default="free")
     billing_cycle = models.CharField(max_length=10, choices=BILLING_CYCLE_CHOICES, blank=True, null=True)
     valid_until = models.DateTimeField(blank=True, null=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-
+ 
     def __str__(self):
         return f"{self.user.email} - {self.plan}"
-
+ 
     @property
     def is_premium(self):
-        if self.plan == "premium" and self.valid_until:
+        if self.plan != "premium":
+            return False
+        if self.billing_cycle == "forever":
+            return True
+        if self.valid_until:
             return self.valid_until > timezone.now()
         return False
-
-
+ 
+ 
 class Review(models.Model):
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="reviews")
-    rating = models.PositiveSmallIntegerField()  # 1-5
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="reviews"
+    )
+    rating = models.PositiveSmallIntegerField()
     review_text = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
-
+ 
     def __str__(self):
         return f"Review by {self.user.email} - {self.rating} stars"

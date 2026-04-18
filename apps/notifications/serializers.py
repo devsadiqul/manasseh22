@@ -11,6 +11,6 @@ class NotificationSerializer(serializers.ModelSerializer):
         model = Notification
         fields = [
             "id", "sender", "notification_type", "title", "message",
-            "related_group", "related_task", "is_read", "created_at",
+            "related_event", "related_task", "is_read", "created_at",
         ]
         read_only_fields = fields

@@ -1,373 +1,738 @@
+# views.py
+from django.db import transaction
 from django.shortcuts import get_object_or_404
 from rest_framework import status
-from rest_framework.views import APIView
-from rest_framework.response import Response
+from rest_framework.decorators import api_view, permission_classes, parser_classes, authentication_classes
 from rest_framework.permissions import IsAuthenticated
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from rest_framework.response import Response
 from drf_yasg.utils import swagger_auto_schema
 from apps.accounts.models import User
 from apps.notifications.utils import send_notification
-from .models import Group, GroupMember, Task
+from .models import Event, EventMember, Task
 from .serializers import (
-    GroupSerializer, CreateGroupSerializer, GroupMemberSerializer, AddMemberSerializer,
-    TaskSerializer, TaskDetailSerializer, CreateTaskSerializer, TaskCommentSerializer,
+    EventListSerializer, EventSerializer, CreateEventSerializer, EventMemberSerializer, AddMemberSerializer,
+    TaskSerializer, TaskDetailSerializer, CreateTaskSerializer, TaskCommentSerializer, CreateCommentSerializer, MyTaskSerializer
 )
+from django.db.models import Q
+from drf_yasg import openapi
 
 
-# Create your views here.
 # ═══════════════════════════════════════════════════════
-# GROUP VIEWS
+# EVENT VIEWS
 # ═══════════════════════════════════════════════════════
+@swagger_auto_schema(
+    method="get",
+    operation_summary="List events",
+    operation_description="Returns events split into 'owned_events' and 'joined_events'. Filter via ?filter=upcoming or ?filter=past",
+    responses={200: EventListSerializer(many=True)},
+    tags=["Events"],
+    security=[{"Bearer": []}],
+)
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+@authentication_classes([JWTAuthentication])
+def event_list(request):
+    from django.utils import timezone
 
-class GroupListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
-    parser_classes = [MultiPartParser, FormParser, JSONParser]
+    filter_type = request.query_params.get("filter", "upcoming")
 
-    @swagger_auto_schema(
-        operation_summary="List groups",
-        operation_description="Returns groups split into 'your_groups' (owned) and 'group_joined' (member).",
-        responses={200: GroupSerializer(many=True)},
-        tags=["Groups"],
-        security=[{"Bearer": []}],
+    member_event_ids = EventMember.objects.filter(user=request.user).values_list("event_id", flat=True)
+    events = (
+        Event.objects
+        .filter(id__in=member_event_ids)
+        .prefetch_related("members")
     )
-    def get(self, request):
-        member_group_ids = GroupMember.objects.filter(user=request.user).values_list("group_id", flat=True)
-        groups = Group.objects.filter(id__in=member_group_ids).prefetch_related("members", "tasks")
-        serializer = GroupSerializer(groups, many=True, context={"request": request})
-        owned = [g for g in serializer.data if g["is_owner"]]
-        joined = [g for g in serializer.data if not g["is_owner"]]
-        return Response({"your_groups": owned, "group_joined": joined})
 
-    @swagger_auto_schema(
-        operation_summary="Create a group",
-        operation_description="Free plan: max 3 groups. Premium: unlimited.",
-        request_body=CreateGroupSerializer,
-        responses={201: GroupSerializer, 400: "Validation error", 403: "Group limit reached"},
-        tags=["Groups"],
-        security=[{"Bearer": []}],
-    )
-    def post(self, request):
-        subscription = getattr(request.user, "subscription", None)
-        if not (subscription and subscription.is_premium):
-            owned_count = Group.objects.filter(created_by=request.user).count()
+    now = timezone.now()
+    if filter_type == "past":
+        events = events.filter(event_date__lt=now)
+    else:
+        events = events.filter(event_date__gte=now)
+
+    owned = [e for e in events if e.created_by == request.user]
+    joined = [e for e in events if e.created_by != request.user]
+
+    return Response({
+        "filter": filter_type,
+        "owned_events": EventListSerializer(owned, many=True, context={"request": request}).data,
+        "joined_events": EventListSerializer(joined, many=True, context={"request": request}).data,
+    })
+
+
+# @swagger_auto_schema(
+#     method="post",
+#     operation_summary="Create an event",
+#     operation_description="Free plan: max 3 events. Premium: unlimited.",
+#     request_body=CreateEventSerializer,
+#     responses={201: EventSerializer, 400: "Validation error", 403: "Event limit reached"},
+#     tags=["Events"],
+#     security=[{"Bearer": []}],
+# )
+# @api_view(["POST"])
+# @permission_classes([IsAuthenticated])
+# @authentication_classes([JWTAuthentication])
+# @parser_classes([MultiPartParser, FormParser])
+# def event_create(request):
+#     subscription = getattr(request.user, "subscription", None)
+#     is_premium = subscription and subscription.is_premium
+
+#     if not is_premium:
+#         with transaction.atomic():
+#             owned_count = Event.objects.select_for_update().filter(created_by=request.user).count()
+#             if owned_count >= 3:
+#                 return Response(
+#                     {"detail": "Free plan allows a maximum of 3 events. Upgrade to Premium for unlimited events."},
+#                     status=status.HTTP_403_FORBIDDEN,
+#                 )
+                
+#     print("Creating event with data:", request.data)
+
+#     serializer = CreateEventSerializer(data=request.data)
+#     if not serializer.is_valid():
+#         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+#     invite_emails = serializer.validated_data.pop("invite_members", [])
+#     event = serializer.save(created_by=request.user)
+#     EventMember.objects.create(event=event, user=request.user, role="admin")
+
+#     for email in invite_emails:
+#         try:
+#             member_user = User.objects.get(email=email)
+#             EventMember.objects.get_or_create(event=event, user=member_user)
+#             send_notification(
+#                 recipient=member_user,
+#                 sender=request.user,
+#                 notification_type="member_added",
+#                 title="You were added to an event",
+#                 message=f"{request.user.name} added you to '{event.name}'.",
+#                 related_event=event,
+#             )
+#         except User.DoesNotExist:
+#             pass
+
+#     return Response({
+#         "message": "Event created successfully.",
+#         "event": EventSerializer(event, context={"request": request}).data,
+#     }, status=status.HTTP_201_CREATED)
+
+
+@swagger_auto_schema(
+    method="post",
+    operation_summary="Create an event",
+    operation_description="Free plan: max 3 events. Premium: unlimited.",
+    request_body=CreateEventSerializer,
+    responses={201: EventSerializer, 400: "Validation error", 403: "Event limit reached"},
+    tags=["Events"],
+    security=[{"Bearer": []}],
+)
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@authentication_classes([JWTAuthentication])
+@parser_classes([MultiPartParser, FormParser])
+def event_create(request):
+    subscription = getattr(request.user, "subscription", None)
+    is_premium = subscription and subscription.is_premium
+
+    # 🔒 Free plan limit check
+    if not is_premium:
+        with transaction.atomic():
+            owned_count = Event.objects.select_for_update().filter(created_by=request.user).count()
             if owned_count >= 3:
                 return Response(
-                    {"detail": "Free plan allows a maximum of 3 groups. Upgrade to Premium for unlimited groups."},
+                    {"detail": "Free plan allows a maximum of 3 events. Upgrade to Premium for unlimited events."},
                     status=status.HTTP_403_FORBIDDEN,
                 )
-        serializer = CreateGroupSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        invite_emails = serializer.validated_data.pop("invite_members", [])
-        group = serializer.save(created_by=request.user)
-        GroupMember.objects.create(group=group, user=request.user, role="admin")
-        for email in invite_emails:
-            try:
-                member_user = User.objects.get(email=email)
-                GroupMember.objects.get_or_create(group=group, user=member_user)
-                send_notification(
-                    recipient=member_user,
-                    sender=request.user,
-                    notification_type="member_added",
-                    title="You were added to a group",
-                    message=f"{request.user.full_name} added you to '{group.name}'.",
-                    related_group=group,
-                )
-            except User.DoesNotExist:
-                pass
-        return Response(GroupSerializer(group, context={"request": request}).data, status=status.HTTP_201_CREATED)
+
+    # 🧠 Normalize invite_members (IMPORTANT FIX)
+    data = request.data.copy()
+
+    invite_members = data.getlist("invite_members")
+
+    # Case 1: Single comma-separated string
+    if len(invite_members) == 1 and isinstance(invite_members[0], str) and "," in invite_members[0]:
+        emails = [email.strip() for email in invite_members[0].split(",") if email.strip()]
+        data.setlist("invite_members", emails)
+
+    # Case 2: Already multiple values → clean spaces
+    else:
+        cleaned = [email.strip() for email in invite_members if isinstance(email, str) and email.strip()]
+        data.setlist("invite_members", cleaned)
+
+    # 🔍 Debug (optional)
+    print("Final invite_members:", data.getlist("invite_members"))
+
+    serializer = CreateEventSerializer(data=data)
+
+    if not serializer.is_valid():
+        print("VALIDATION ERROR:", serializer.errors)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    invite_emails = serializer.validated_data.pop("invite_members", [])
+
+    # 💾 Create event
+    event = serializer.save(created_by=request.user)
+
+    # 👤 Add creator as admin
+    EventMember.objects.create(event=event, user=request.user, role="admin")
+
+    # 👥 Add invited members
+    for email in invite_emails:
+        try:
+            member_user = User.objects.get(email=email)
+
+            EventMember.objects.get_or_create(
+                event=event,
+                user=member_user
+            )
+
+            send_notification(
+                recipient=member_user,
+                sender=request.user,
+                notification_type="member_added",
+                title="You were added to an event",
+                message=f"{request.user.name} added you to '{event.name}'.",
+                related_event=event,
+            )
+
+        except User.DoesNotExist:
+            # Optional: later you can handle pending invites here
+            print(f"User not found for email: {email}")
+            pass
+
+    return Response({
+        "message": "Event created successfully.",
+        "event": EventSerializer(event, context={"request": request}).data,
+    }, status=status.HTTP_201_CREATED)
 
 
-class GroupDetailView(APIView):
-    permission_classes = [IsAuthenticated]
-    parser_classes = [MultiPartParser, FormParser, JSONParser]
+@swagger_auto_schema(
+    method="get",
+    operation_summary="Get event details",
+    operation_description="Returns event info, task list, members, and countdown timer data.",
+    responses={200: EventSerializer, 403: "Not a member", 404: "Not found"},
+    tags=["Events"],
+    security=[{"Bearer": []}],
+)
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+@authentication_classes([JWTAuthentication])
+def event_details(request, event_id):
+    event = get_object_or_404(Event, id=event_id)
 
-    def _get_group(self, group_id, user, require_owner=False):
-        group = get_object_or_404(Group, id=group_id)
-        if require_owner and group.created_by != user:
-            return None, Response({"detail": "Only the group owner can perform this action."}, status=status.HTTP_403_FORBIDDEN)
-        if not group.members.filter(user=user).exists():
-            return None, Response({"detail": "You are not a member of this group."}, status=status.HTTP_403_FORBIDDEN)
-        return group, None
+    if not event.members.filter(user=request.user).exists():
+        return Response({"detail": "You are not a member of this event."}, status=status.HTTP_403_FORBIDDEN)
 
-    @swagger_auto_schema(
-        operation_summary="Get group details",
-        operation_description="Returns group info, task list, members, and countdown timer data.",
-        responses={200: GroupSerializer, 403: "Not a member", 404: "Not found"},
-        tags=["Groups"],
-        security=[{"Bearer": []}],
-    )
-    def get(self, request, group_id):
-        group, err = self._get_group(group_id, request.user)
-        if err:
-            return err
-        tasks = group.tasks.select_related("assigned_to", "created_by").prefetch_related("comments")
-        members = group.members.select_related("user")
-        return Response({
-            "group": GroupSerializer(group, context={"request": request}).data,
-            "tasks": TaskSerializer(tasks, many=True).data,
-            "members": GroupMemberSerializer(members, many=True).data,
-        })
+    tasks = event.tasks.select_related("assigned_to")
+    members = event.members.select_related("user")
 
-    @swagger_auto_schema(
-        operation_summary="Update group",
-        operation_description="Only the group owner/admin can update.",
-        request_body=CreateGroupSerializer,
-        responses={200: GroupSerializer, 403: "Not authorized"},
-        tags=["Groups"],
-        security=[{"Bearer": []}],
-    )
-    def patch(self, request, group_id):
-        group, err = self._get_group(group_id, request.user, require_owner=True)
-        if err:
-            return err
-        serializer = CreateGroupSerializer(group, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-        serializer.validated_data.pop("invite_members", None)
-        serializer.save()
-        return Response(GroupSerializer(group, context={"request": request}).data)
+    def format_task(task):
+        return {
+            "id": str(task.id),
+            "name": task.name,
+            "status": task.status,
+            "priority": task.priority,
+            "due_date": task.due_date,
+            "assigned_to": {
+                "id": str(task.assigned_to.id),
+                "name": task.assigned_to.name,
+                "image": request.build_absolute_uri(task.assigned_to.image.url) if task.assigned_to and task.assigned_to.image else None,
+            } if task.assigned_to else None,
+        }
 
-    @swagger_auto_schema(
-        operation_summary="Delete group",
-        operation_description="Only the group owner can delete.",
-        responses={204: "Deleted.", 403: "Not authorized"},
-        tags=["Groups"],
-        security=[{"Bearer": []}],
-    )
-    def delete(self, request, group_id):
-        group, err = self._get_group(group_id, request.user, require_owner=True)
-        if err:
-            return err
-        group.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+    def format_member(m):
+        return {
+            "id": str(m.user.id),
+            "name": m.user.name,
+            "image": request.build_absolute_uri(m.user.image.url) if m.user.image else None,
+            "role": m.role,
+        }
+
+    task_list = list(tasks)
+
+    return Response({
+        "id": str(event.id),
+        "name": event.name,
+        "cover_image": request.build_absolute_uri(event.cover_image.url) if event.cover_image else None,
+        "event_date": event.event_date,
+        "description": event.description,
+        "days_left": event.days_left,
+        "is_owner": event.created_by == request.user,
+        "task_count": len(task_list),
+        "completed_task_count": sum(1 for t in task_list if t.status == "completed"),
+        "members": [format_member(m) for m in members],
+        "tasks": [format_task(t) for t in task_list],
+    })
 
 
-class GroupMemberView(APIView):
-    permission_classes = [IsAuthenticated]
+@swagger_auto_schema(
+    method="patch",
+    operation_summary="Update event",
+    operation_description="Only the event owner can update.",
+    request_body=CreateEventSerializer,
+    responses={200: EventSerializer, 403: "Not authorized"},
+    tags=["Events"],
+    security=[{"Bearer": []}],
+)
+@api_view(["PATCH"])
+@permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser, JSONParser])
+def event_update(request, event_id):
+    event = get_object_or_404(Event, id=event_id)
 
-    @swagger_auto_schema(
-        operation_summary="List group members",
-        responses={200: GroupMemberSerializer(many=True)},
-        tags=["Groups"],
-        security=[{"Bearer": []}],
-    )
-    def get(self, request, group_id):
-        group = get_object_or_404(Group, id=group_id)
-        members = group.members.select_related("user")
-        return Response(GroupMemberSerializer(members, many=True).data)
+    if not event.members.filter(user=request.user).exists():
+        return Response({"detail": "You are not a member of this event."}, status=status.HTTP_403_FORBIDDEN)
 
-    @swagger_auto_schema(
-        operation_summary="Add member to group",
-        operation_description="Add a user by email. Admin only.",
-        request_body=AddMemberSerializer,
-        responses={201: GroupMemberSerializer, 400: "Already a member", 404: "User not found"},
-        tags=["Groups"],
-        security=[{"Bearer": []}],
-    )
-    def post(self, request, group_id):
-        group = get_object_or_404(Group, id=group_id, created_by=request.user)
-        serializer = AddMemberSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        user = get_object_or_404(User, email=serializer.validated_data["email"])
-        membership, created = GroupMember.objects.get_or_create(group=group, user=user)
-        if not created:
-            return Response({"detail": "User is already a member."}, status=status.HTTP_400_BAD_REQUEST)
-        send_notification(
-            recipient=user,
-            sender=request.user,
-            notification_type="member_added",
-            title="Added to group",
-            message=f"{request.user.full_name} added you to '{group.name}'.",
-            related_group=group,
+    if event.created_by != request.user:
+        return Response({"detail": "Only the event owner can update this event."}, status=status.HTTP_403_FORBIDDEN)
+
+    serializer = CreateEventSerializer(event, data=request.data, partial=True)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    serializer.validated_data.pop("invite_members", None)
+    serializer.save()
+    return Response({
+        "message": "Event updated successfully.",
+        "event": EventSerializer(event, context={"request": request}).data,
+    })
+
+
+@swagger_auto_schema(
+    method="delete",
+    operation_summary="Delete event",
+    operation_description="Only the event owner can delete.",
+    responses={200: "Deleted.", 403: "Not authorized"},
+    tags=["Events"],
+    security=[{"Bearer": []}],
+)
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+def event_delete(request, event_id):
+    event = get_object_or_404(Event, id=event_id)
+
+    if event.created_by != request.user:
+        return Response({"detail": "Only the event owner can delete this event."}, status=status.HTTP_403_FORBIDDEN)
+
+    event.delete()
+    return Response({"message": "Event deleted successfully."}, status=status.HTTP_200_OK)
+
+
+@swagger_auto_schema(
+    method="get",
+    operation_summary="List event members",
+    manual_parameters=[
+        openapi.Parameter("search", openapi.IN_QUERY, description="Search by name, email or phone", type=openapi.TYPE_STRING),
+    ],
+    responses={200: EventMemberSerializer(many=True)},
+    tags=["Events"],
+    security=[{"Bearer": []}],
+)
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+@authentication_classes([JWTAuthentication])
+def event_member_list(request, event_id):
+    event = get_object_or_404(Event, id=event_id)
+    members = event.members.select_related("user").exclude(user=event.created_by)
+
+    search = request.query_params.get("search", "").strip()
+    if search:
+        members = members.filter(
+            Q(user__name__icontains=search) |
+            Q(user__email__icontains=search) |
+            Q(user__phone__icontains=search)
         )
-        return Response(GroupMemberSerializer(membership).data, status=status.HTTP_201_CREATED)
+
+    return Response([
+        {
+            "id": m.id,
+            "name": m.user.name,
+            "email": m.user.email,
+            "image": request.build_absolute_uri(m.user.image.url) if m.user.image else None,
+        }
+        for m in members
+    ])
 
 
-class RemoveMemberView(APIView):
-    permission_classes = [IsAuthenticated]
+@swagger_auto_schema(
+    method="post",
+    operation_summary="Add member to event",
+    operation_description="Add a user by email. Admin only.",
+    request_body=AddMemberSerializer,
+    responses={201: "Member added", 400: "Already a member", 404: "User not found"},
+    tags=["Events"],
+    security=[{"Bearer": []}],
+)
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@authentication_classes([JWTAuthentication])
+def event_member_add(request, event_id):
+    event = get_object_or_404(Event, id=event_id)
 
-    @swagger_auto_schema(
-        operation_summary="Remove member from group",
-        operation_description="Admin only.",
-        responses={204: "Removed.", 403: "Not authorized"},
-        tags=["Groups"],
-        security=[{"Bearer": []}],
+    if event.created_by != request.user:
+        return Response({"detail": "Only the event owner can add members."}, status=status.HTTP_403_FORBIDDEN)
+
+    serializer = AddMemberSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    user = get_object_or_404(User, email=serializer.validated_data["email"])
+    membership, created = EventMember.objects.get_or_create(event=event, user=user)
+    if not created:
+        return Response({"detail": "User is already a member."}, status=status.HTTP_400_BAD_REQUEST)
+
+    send_notification(
+        recipient=user,
+        sender=request.user,
+        notification_type="member_added",
+        title="Added to event",
+        message=f"{request.user.name} added you to '{event.name}'.",
+        related_event=event,
     )
-    def delete(self, request, group_id, user_id):
-        group = get_object_or_404(Group, id=group_id, created_by=request.user)
-        membership = get_object_or_404(GroupMember, group=group, user__id=user_id)
-        membership.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    return Response({
+        "message": "Member added successfully.",
+        "member": {
+            "id": membership.id,
+            "name": user.name,
+            "email": user.email,
+            "image": request.build_absolute_uri(user.image.url) if user.image else None,
+        }
+    }, status=status.HTTP_201_CREATED)
+
+
+@swagger_auto_schema(
+    method="delete",
+    operation_summary="Remove member from event",
+    operation_description="Admin only.",
+    responses={200: "Removed.", 403: "Not authorized"},
+    tags=["Events"],
+    security=[{"Bearer": []}],
+)
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+@authentication_classes([JWTAuthentication])
+def event_member_remove(request, event_id, member_id):
+    event = get_object_or_404(Event, id=event_id, created_by=request.user)
+    membership = get_object_or_404(EventMember, event=event, id=member_id)
+    membership.delete()
+    return Response({"message": "Member removed successfully."}, status=status.HTTP_200_OK)
 
 
 # ═══════════════════════════════════════════════════════
 # TASK VIEWS
 # ═══════════════════════════════════════════════════════
+@swagger_auto_schema(
+    method="get",
+    operation_summary="List tasks in an event",
+    responses={200: TaskSerializer(many=True)},
+    tags=["Tasks"],
+    security=[{"Bearer": []}],
+)
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+@authentication_classes([JWTAuthentication])
+def task_list(request, event_id):
+    event = get_object_or_404(Event, id=event_id)
 
-class TaskListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    if not event.members.filter(user=request.user).exists():
+        return Response({"detail": "Not a member."}, status=status.HTTP_403_FORBIDDEN)
 
-    @swagger_auto_schema(
-        operation_summary="List tasks in a group",
-        responses={200: TaskSerializer(many=True)},
-        tags=["Tasks"],
-        security=[{"Bearer": []}],
+    tasks = event.tasks.select_related("assigned_to", "created_by").prefetch_related("comments")
+    return Response(TaskSerializer(tasks, many=True).data)
+
+
+@swagger_auto_schema(
+    method="get",
+    operation_summary="Get my assigned tasks",
+    operation_description="Returns all pending tasks assigned to the logged in user.",
+    responses={200: MyTaskSerializer(many=True)},
+    tags=["Tasks"],
+    security=[{"Bearer": []}],
+)
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+@authentication_classes([JWTAuthentication])
+def my_task_list(request):
+    tasks = (
+        Task.objects
+        .filter(assigned_to=request.user, status="pending")
+        .select_related("event", "assigned_to")
+        .order_by("due_date")
     )
-    def get(self, request, group_id):
-        group = get_object_or_404(Group, id=group_id)
-        if not group.members.filter(user=request.user).exists():
-            return Response({"detail": "Not a member."}, status=status.HTTP_403_FORBIDDEN)
-        tasks = group.tasks.select_related("assigned_to", "created_by").prefetch_related("comments")
-        return Response(TaskSerializer(tasks, many=True).data)
 
-    @swagger_auto_schema(
-        operation_summary="Create a task",
-        operation_description="Assign by email. Assignee gets a notification.",
-        request_body=CreateTaskSerializer,
-        responses={201: TaskSerializer, 400: "Validation error", 403: "Not a member"},
-        tags=["Tasks"],
-        security=[{"Bearer": []}],
+    return Response({
+        "pending_count": tasks.count(),
+        "tasks": MyTaskSerializer(tasks, many=True, context={"request": request}).data,
+    })
+
+
+@swagger_auto_schema(
+    method="post",
+    operation_summary="Create a task",
+    operation_description="Assign by email. Assignee gets a notification.",
+    request_body=CreateTaskSerializer,
+    responses={201: "Task created", 400: "Validation error", 403: "Not a member"},
+    tags=["Tasks"],
+    security=[{"Bearer": []}],
+)
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@authentication_classes([JWTAuthentication])
+def task_create(request, event_id):
+    event = get_object_or_404(Event, id=event_id)
+
+    if not event.members.filter(user=request.user).exists():
+        return Response({"detail": "Not a member."}, status=status.HTTP_403_FORBIDDEN)
+
+    serializer = CreateTaskSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    assigned_email = serializer.validated_data.pop("assigned_to_email", None)
+    assigned_user = User.objects.filter(email=assigned_email).first() if assigned_email else None
+
+    task = Task.objects.create(
+        event=event,
+        created_by=request.user,
+        assigned_to=assigned_user,
+        **serializer.validated_data,
     )
-    def post(self, request, group_id):
-        group = get_object_or_404(Group, id=group_id)
-        if not group.members.filter(user=request.user).exists():
-            return Response({"detail": "Not a member."}, status=status.HTTP_403_FORBIDDEN)
-        serializer = CreateTaskSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        assigned_email = serializer.validated_data.pop("assigned_to_email", None)
-        assigned_user = User.objects.filter(email=assigned_email).first() if assigned_email else None
-        task = Task.objects.create(
-            group=group,
-            created_by=request.user,
-            assigned_to=assigned_user,
-            **serializer.validated_data,
+
+    if assigned_user and assigned_user != request.user:
+        send_notification(
+            recipient=assigned_user,
+            sender=request.user,
+            notification_type="task_assigned",
+            title="Task assigned to you",
+            message=f"You've been assigned '{task.name}' in '{event.name}'.",
+            related_event=event,
+            related_task=task,
         )
-        if assigned_user and assigned_user != request.user:
-            send_notification(
-                recipient=assigned_user,
-                sender=request.user,
-                notification_type="task_assigned",
-                title="Task assigned to you",
-                message=f"You've been assigned '{task.name}' in '{group.name}'.",
-                related_group=group,
-                related_task=task,
-            )
-        return Response(TaskSerializer(task).data, status=status.HTTP_201_CREATED)
+
+    return Response({
+        "message": "Task created successfully.",
+        "task": {
+            "id": str(task.id),
+            "name": task.name,
+            "priority": task.priority,
+            "due_date": task.due_date,
+            "status": task.status,
+            "assigned_to": {
+                "id": str(assigned_user.id),
+                "name": assigned_user.name,
+                "image": request.build_absolute_uri(assigned_user.image.url) if assigned_user.image else None,
+            } if assigned_user else None,
+        }
+    }, status=status.HTTP_201_CREATED)
 
 
-class TaskDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+@swagger_auto_schema(
+    method="get",
+    operation_summary="Get task details",
+    operation_description="Includes comments and activity log.",
+    responses={200: TaskDetailSerializer},
+    tags=["Tasks"],
+    security=[{"Bearer": []}],
+)
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+@authentication_classes([JWTAuthentication])
+def task_details(request, event_id, task_id):
+    event = get_object_or_404(Event, id=event_id)
 
-    def _get_task(self, group_id, task_id, user):
-        group = get_object_or_404(Group, id=group_id)
-        if not group.members.filter(user=user).exists():
-            return None, None, Response({"detail": "Not a member."}, status=status.HTTP_403_FORBIDDEN)
-        task = get_object_or_404(Task, id=task_id, group=group)
-        return group, task, None
+    if not event.members.filter(user=request.user).exists():
+        return Response({"detail": "Not a member."}, status=status.HTTP_403_FORBIDDEN)
 
-    @swagger_auto_schema(
-        operation_summary="Get task details",
-        operation_description="Includes comments and activity log.",
-        responses={200: TaskDetailSerializer},
-        tags=["Tasks"],
-        security=[{"Bearer": []}],
+    task = get_object_or_404(
+        Task.objects.select_related("assigned_to", "created_by").prefetch_related("comments__user"),
+        id=task_id, event=event
     )
-    def get(self, request, group_id, task_id):
-        _, task, err = self._get_task(group_id, task_id, request.user)
-        if err:
-            return err
-        return Response(TaskDetailSerializer(task).data)
-
-    @swagger_auto_schema(
-        operation_summary="Update task",
-        request_body=TaskSerializer,
-        responses={200: TaskSerializer},
-        tags=["Tasks"],
-        security=[{"Bearer": []}],
-    )
-    def patch(self, request, group_id, task_id):
-        _, task, err = self._get_task(group_id, task_id, request.user)
-        if err:
-            return err
-        serializer = TaskSerializer(task, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
-        return Response(serializer.data)
-
-    @swagger_auto_schema(
-        operation_summary="Delete task",
-        responses={204: "Deleted."},
-        tags=["Tasks"],
-        security=[{"Bearer": []}],
-    )
-    def delete(self, request, group_id, task_id):
-        _, task, err = self._get_task(group_id, task_id, request.user)
-        if err:
-            return err
-        task.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+    return Response(TaskDetailSerializer(task, context={"request": request}).data)
 
 
-class MarkTaskCompleteView(APIView):
-    permission_classes = [IsAuthenticated]
+@swagger_auto_schema(
+    method="patch",
+    operation_summary="Update task",
+    operation_description="Pass assigned_to_email to change assignee. Pass null to unassign.",
+    request_body=TaskSerializer,
+    responses={200: "Task updated"},
+    tags=["Tasks"],
+    security=[{"Bearer": []}],
+)
+@api_view(["PATCH"])
+@permission_classes([IsAuthenticated])
+@authentication_classes([JWTAuthentication])
+def task_update(request, event_id, task_id):
+    event = get_object_or_404(Event, id=event_id)
 
-    @swagger_auto_schema(
-        operation_summary="Toggle task complete / incomplete",
-        operation_description="Notifies all group members when toggled.",
-        responses={200: TaskSerializer},
-        tags=["Tasks"],
-        security=[{"Bearer": []}],
-    )
-    def post(self, request, group_id, task_id):
-        group = get_object_or_404(Group, id=group_id)
-        task = get_object_or_404(Task, id=task_id, group=group)
-        task.status = "completed" if task.status == "pending" else "pending"
-        task.save()
-        for membership in group.members.exclude(user=request.user).select_related("user"):
-            send_notification(
-                recipient=membership.user,
-                sender=request.user,
-                notification_type="task_completed",
-                title="Task completed",
-                message=f"{request.user.full_name} completed task '{task.name}'.",
-                related_group=group,
-                related_task=task,
-            )
-        return Response(TaskSerializer(task).data)
+    if not event.members.filter(user=request.user).exists():
+        return Response({"detail": "Not a member."}, status=status.HTTP_403_FORBIDDEN)
+
+    task = get_object_or_404(Task, id=task_id, event=event)
+    old_assignee = task.assigned_to
+
+    serializer = TaskSerializer(task, data=request.data, partial=True, context={"request": request})
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    updated_task = serializer.save()
+    new_assignee = updated_task.assigned_to
+
+    if new_assignee and new_assignee != old_assignee and new_assignee != request.user:
+        send_notification(
+            recipient=new_assignee,
+            sender=request.user,
+            notification_type="task_assigned",
+            title="Task assigned to you",
+            message=f"You've been assigned '{updated_task.name}' in '{event.name}'.",
+            related_event=event,
+            related_task=updated_task,
+        )
+
+    return Response({
+        "message": "Task updated successfully.",
+        "task": {
+            "id": str(updated_task.id),
+            "name": updated_task.name,
+            "description": updated_task.description,
+            "due_date": updated_task.due_date,
+            "priority": updated_task.priority,
+            "status": updated_task.status,
+            "assigned_to": {
+                "id": str(new_assignee.id),
+                "name": new_assignee.name,
+                "image": request.build_absolute_uri(new_assignee.image.url) if new_assignee.image else None,
+            } if new_assignee else None,
+        }
+    })
 
 
-class TaskCommentListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+@swagger_auto_schema(
+    method="delete",
+    operation_summary="Delete task",
+    responses={200: "Deleted."},
+    tags=["Tasks"],
+    security=[{"Bearer": []}],
+)
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+@authentication_classes([JWTAuthentication])
+def task_delete(request, event_id, task_id):
+    event = get_object_or_404(Event, id=event_id)
 
-    @swagger_auto_schema(
-        operation_summary="List comments on a task",
-        responses={200: TaskCommentSerializer(many=True)},
-        tags=["Tasks"],
-        security=[{"Bearer": []}],
-    )
-    def get(self, request, group_id, task_id):
-        task = get_object_or_404(Task, id=task_id, group__id=group_id)
-        comments = task.comments.select_related("user").order_by("created_at")
-        return Response(TaskCommentSerializer(comments, many=True).data)
+    if not event.members.filter(user=request.user).exists():
+        return Response({"detail": "Not a member."}, status=status.HTTP_403_FORBIDDEN)
 
-    @swagger_auto_schema(
-        operation_summary="Add comment to a task",
-        request_body=TaskCommentSerializer,
-        responses={201: TaskCommentSerializer},
-        tags=["Tasks"],
-        security=[{"Bearer": []}],
-    )
-    def post(self, request, group_id, task_id):
-        task = get_object_or_404(Task, id=task_id, group__id=group_id)
-        serializer = TaskCommentSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        comment = serializer.save(task=task, user=request.user)
-        if task.assigned_to and task.assigned_to != request.user:
-            send_notification(
-                recipient=task.assigned_to,
-                sender=request.user,
-                notification_type="task_comment",
-                title="New comment on your task",
-                message=f"{request.user.full_name} commented on '{task.name}'.",
-                related_task=task,
-            )
-        return Response(TaskCommentSerializer(comment).data, status=status.HTTP_201_CREATED)
+    task = get_object_or_404(Task, id=task_id, event=event)
+    task.delete()
+    return Response({"message": "Task deleted successfully."}, status=status.HTTP_200_OK)
+
+
+@swagger_auto_schema(
+    method="post",
+    operation_summary="Toggle task complete / incomplete",
+    operation_description="Notifies all event members when toggled.",
+    responses={200: TaskSerializer},
+    tags=["Tasks"],
+    security=[{"Bearer": []}],
+)
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@authentication_classes([JWTAuthentication])
+def task_mark_complete(request, event_id, task_id):
+    event = get_object_or_404(Event, id=event_id)
+
+    if not event.members.filter(user=request.user).exists():
+        return Response({"detail": "Not a member."}, status=status.HTTP_403_FORBIDDEN)
+
+    task = get_object_or_404(Task, id=task_id, event=event)
+    task.status = "completed" if task.status == "pending" else "pending"
+    task.save()
+
+    for membership in event.members.exclude(user=request.user).select_related("user"):
+        send_notification(
+            recipient=membership.user,
+            sender=request.user,
+            notification_type="task_completed",
+            title="Task completed",
+            message=f"{request.user.name} completed task '{task.name}'.",
+            related_event=event,
+            related_task=task,
+        )
+    return Response({
+        "message": "Task marked as completed." if task.status == "completed" else "Task marked as pending.",
+        "task": TaskSerializer(task).data,
+    })
+
+
+@swagger_auto_schema(
+    method="get",
+    operation_summary="List comments on a task",
+    responses={200: TaskCommentSerializer(many=True)},
+    tags=["Tasks"],
+    security=[{"Bearer": []}],
+)
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+@authentication_classes([JWTAuthentication])
+def task_comment_list(request, event_id, task_id):
+    event = get_object_or_404(Event, id=event_id)
+
+    if not event.members.filter(user=request.user).exists():
+        return Response({"detail": "Not a member."}, status=status.HTTP_403_FORBIDDEN)
+
+    task = get_object_or_404(Task, id=task_id, event=event)
+    comments = task.comments.select_related("user").order_by("created_at")
+    return Response(TaskCommentSerializer(comments, many=True).data)
+
+
+@swagger_auto_schema(
+    method="post",
+    operation_summary="Add comment to a task",
+    request_body=CreateCommentSerializer,
+    responses={201: "Comment added"},
+    tags=["Tasks"],
+    security=[{"Bearer": []}],
+)
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@authentication_classes([JWTAuthentication])
+def task_comment_create(request, event_id, task_id):
+    event = get_object_or_404(Event, id=event_id)
+
+    if not event.members.filter(user=request.user).exists():
+        return Response({"detail": "Not a member."}, status=status.HTTP_403_FORBIDDEN)
+
+    task = get_object_or_404(Task, id=task_id, event=event)
+
+    serializer = CreateCommentSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    comment = serializer.save(task=task, user=request.user)
+
+    if task.assigned_to and task.assigned_to != request.user:
+        send_notification(
+            recipient=task.assigned_to,
+            sender=request.user,
+            notification_type="task_comment",
+            title="New comment on your task",
+            message=f"{request.user.name} commented on '{task.name}'.",
+            related_task=task,
+        )
+
+    return Response({
+        "message": "Comment added successfully.",
+        "comment": {
+            "id": str(comment.id),
+            "user": {
+                "id": str(request.user.id),
+                "name": request.user.name,
+                "image": request.build_absolute_uri(request.user.image.url) if request.user.image else None,
+            },
+            "content": comment.content,
+            "created_at": comment.created_at,
+        }
+    }, status=status.HTTP_201_CREATED)

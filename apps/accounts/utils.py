@@ -5,7 +5,7 @@ from django.utils import timezone
 from django.core.mail import send_mail
 from django.conf import settings
 from rest_framework_simplejwt.tokens import RefreshToken
-
+from apps.tasks.models import Event, Task
 from .models import OTPVerification
 
 
@@ -73,8 +73,7 @@ def get_tokens_for_user(user):
 
 
 def get_activity_summary(user):
-    from tasks.models import Group, Task
-    groups_count = Group.objects.filter(members__user=user).count()
+    events_count = Event.objects.filter(members__user=user).count()
     total_tasks = Task.objects.filter(assigned_to=user).count()
     completed = Task.objects.filter(assigned_to=user, status="completed").count()
-    return {"groups": groups_count, "total_tasks": total_tasks, "completed": completed}
+    return {"events": events_count, "total_tasks": total_tasks, "completed": completed}

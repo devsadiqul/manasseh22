@@ -30,6 +30,7 @@ urlpatterns = [
     path("api/v1/", include("apps.accounts.urls")),
     path("api/v1/", include("apps.subscriptions.urls")),
     path("api/v1/", include("apps.tasks.urls")),
+    path("api/v1/", include("apps.legal.urls")),
     path("api/v1/", include("apps.notifications.urls")),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 

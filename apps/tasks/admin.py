@@ -1,10 +1,10 @@
 from django.contrib import admin
-from .models import Group, GroupMember, Task, TaskComment
+from .models import Event, EventMember, Task, TaskComment
 
 
 # Register your models here.
-class GroupMemberInline(admin.TabularInline):
-    model = GroupMember
+class EventMemberInline(admin.TabularInline):
+    model = EventMember
     extra = 0
     readonly_fields = ["joined_at"]
     fields = ["user", "role", "joined_at"]
@@ -18,13 +18,13 @@ class TaskInline(admin.TabularInline):
     show_change_link = True
 
 
-@admin.register(Group)
-class GroupAdmin(admin.ModelAdmin):
+@admin.register(Event)
+class EventAdmin(admin.ModelAdmin):
     list_display = ["name", "created_by", "event_date", "days_left_display", "task_count_display", "completed_task_count_display", "created_at"]
     list_filter = ["event_date", "created_at"]
     search_fields = ["name", "description", "created_by__email"]
     readonly_fields = ["id", "days_left_display", "task_count_display", "completed_task_count_display", "created_at", "updated_at"]
-    inlines = [GroupMemberInline, TaskInline]
+    inlines = [EventMemberInline, TaskInline]
 
     fieldsets = (
         (None, {"fields": ("id", "name", "description", "cover_image")}),
@@ -49,15 +49,15 @@ class GroupAdmin(admin.ModelAdmin):
         return obj.completed_task_count
 
 
-@admin.register(GroupMember)
-class GroupMemberAdmin(admin.ModelAdmin):
-    list_display = ["user", "group", "role", "joined_at"]
+@admin.register(EventMember)
+class EventMemberAdmin(admin.ModelAdmin):
+    list_display = ["user", "event", "role", "joined_at"]
     list_filter = ["role", "joined_at"]
-    search_fields = ["user__email", "group__name"]
+    search_fields = ["user__email", "event__name"]
     readonly_fields = ["joined_at"]
 
     def get_queryset(self, request):
-        return super().get_queryset(request).select_related("user", "group")
+        return super().get_queryset(request).select_related("user", "event")
 
 
 class TaskCommentInline(admin.TabularInline):
@@ -69,21 +69,21 @@ class TaskCommentInline(admin.TabularInline):
 
 @admin.register(Task)
 class TaskAdmin(admin.ModelAdmin):
-    list_display = ["name", "group", "assigned_to", "priority", "status", "due_date", "created_at"]
+    list_display = ["name", "event", "assigned_to", "priority", "status", "due_date", "created_at"]
     list_filter = ["priority", "status", "due_date", "created_at"]
-    search_fields = ["name", "description", "assigned_to__email", "group__name"]
+    search_fields = ["name", "description", "assigned_to__email", "event__name"]
     readonly_fields = ["id", "created_at", "updated_at"]
     inlines = [TaskCommentInline]
 
     fieldsets = (
         (None, {"fields": ("id", "name", "description")}),
-        ("Assignment", {"fields": ("group", "assigned_to", "created_by")}),
+        ("Assignment", {"fields": ("event", "assigned_to", "created_by")}),
         ("Details", {"fields": ("priority", "status", "due_date")}),
         ("Timestamps", {"fields": ("created_at", "updated_at")}),
     )
 
     def get_queryset(self, request):
-        return super().get_queryset(request).select_related("group", "assigned_to", "created_by")
+        return super().get_queryset(request).select_related("event", "assigned_to", "created_by")
 
 
 @admin.register(TaskComment)

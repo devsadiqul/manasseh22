@@ -1,6 +1,5 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
-from django.utils.translation import gettext_lazy as _
 from .models import User, OTPVerification
 
 
@@ -8,22 +7,23 @@ from .models import User, OTPVerification
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
     ordering = ["-created_at"]
-    list_display = ["email", "full_name", "phone", "is_email_verified", "is_active", "is_staff", "created_at"]
+    list_display = ["email", "name", "phone", "is_email_verified", "is_active", "is_staff", "created_at"]
     list_filter = ["is_active", "is_staff", "is_email_verified", "created_at"]
-    search_fields = ["email", "full_name", "phone"]
+    search_fields = ["email", "name", "phone"]
     readonly_fields = ["id", "created_at", "updated_at"]
 
     fieldsets = (
         (None, {"fields": ("id", "email", "password")}),
-        (_("Personal Info"), {"fields": ("full_name", "phone", "profile_picture")}),
-        (_("Permissions"), {"fields": ("is_active", "is_staff", "is_superuser", "is_email_verified", "groups", "user_permissions")}),
-        (_("Important Dates"), {"fields": ("last_login", "created_at", "updated_at")}),
+        ("Personal Info", {"fields": ("name", "phone", "image")}),
+        ("Social Auth", {"fields": ("google_id", "apple_id")}),
+        ("Permissions", {"fields": ("is_active", "is_staff", "is_superuser", "is_email_verified", "groups", "user_permissions")}),
+        ("Important Dates", {"fields": ("last_login", "created_at", "updated_at")}),
     )
 
     add_fieldsets = (
         (None, {
             "classes": ("wide",),
-            "fields": ("email", "full_name", "phone", "password1", "password2", "is_active", "is_staff"),
+            "fields": ("email", "name", "phone", "password1", "password2", "is_active", "is_staff"),
         }),
     )
 

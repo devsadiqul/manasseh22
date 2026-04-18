@@ -1,9 +1,12 @@
 from django.shortcuts import get_object_or_404
 from rest_framework import status
-from rest_framework.views import APIView
-from rest_framework.response import Response
+from rest_framework.decorators import api_view, permission_classes, parser_classes, authentication_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from rest_framework.response import Response
+from rest_framework.response import Response
+from django.contrib.auth import authenticate
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
@@ -19,262 +22,273 @@ from apps.subscriptions.serializers import SubscriptionSerializer
 
 
 
-# Create your views here.
 # ═══════════════════════════════════════════════════════
 # AUTH
 # ═══════════════════════════════════════════════════════
 
-class RegisterView(APIView):
-    permission_classes = [AllowAny]
+@swagger_auto_schema(
+    method="post",
+    operation_summary="Register a new user",
+    operation_description="Creates a new user account and sends a verification OTP to the email.",
+    request_body=RegisterSerializer,
+    responses={201: "User registered. OTP sent to email.", 400: "Validation error"},
+    tags=["Auth"],
+)
+@api_view(["POST"])
+def register(request):
+    serializer = RegisterSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    @swagger_auto_schema(
-        operation_summary="Register a new user",
-        operation_description="Creates a new user account and sends a verification OTP to the email.",
-        request_body=RegisterSerializer,
-        responses={201: "User registered. OTP sent to email.", 400: "Validation error"},
-        tags=["Auth"],
-    )
-    def post(self, request):
-        serializer = RegisterSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        user = serializer.save()
-        create_default_subscription(user)
-        otp = create_otp(user, "email_verification")
-        send_otp_email(user, otp.otp_code, "email_verification")
-        return Response({"detail": "Registration successful. Please verify your email."}, status=status.HTTP_201_CREATED)
+    email = serializer.validated_data.get("email")
+    if User.objects.filter(email=email).exists():
+        return Response({"detail": "This email is already registered."}, status=status.HTTP_400_BAD_REQUEST)
 
+    if not serializer.validated_data.get("agreed_to_terms"):
+        return Response({"detail": "You must agree to the Terms of Use & Privacy Policy."}, status=status.HTTP_400_BAD_REQUEST)
 
-class VerifyEmailView(APIView):
-    permission_classes = [AllowAny]
-
-    @swagger_auto_schema(
-        operation_summary="Verify email OTP",
-        request_body=OTPVerifySerializer,
-        responses={200: "Email verified successfully.", 400: "Invalid or expired OTP"},
-        tags=["Auth"],
-    )
-    def post(self, request):
-        serializer = OTPVerifySerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        user = get_object_or_404(User, email=serializer.validated_data["email"])
-        success, result = verify_otp(user, serializer.validated_data["otp_code"], "email_verification")
-        if not success:
-            return Response({"detail": result}, status=status.HTTP_400_BAD_REQUEST)
-        user.is_email_verified = True
-        user.save()
-        return Response({"detail": "Email verified successfully."}, status=status.HTTP_200_OK)
+    user = serializer.save()
+    create_default_subscription(user)
+    otp = create_otp(user, "email_verification")
+    send_otp_email(user, otp.otp_code, "email_verification")
+    return Response({"message": "Registration successful. Please verify your email."}, status=status.HTTP_201_CREATED)
 
 
-class LoginView(APIView):
-    permission_classes = [AllowAny]
+@swagger_auto_schema(
+    method="post",
+    operation_summary="Verify email OTP",
+    request_body=OTPVerifySerializer,
+    responses={200: "Email verified successfully.", 400: "Invalid or expired OTP"},
+    tags=["Auth"],
+)
+@api_view(["POST"])
+def verify_email(request):
+    serializer = OTPVerifySerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    @swagger_auto_schema(
-        operation_summary="Login",
-        operation_description="Authenticate with email and password. Returns JWT tokens.",
-        request_body=LoginSerializer,
-        responses={
-            200: openapi.Response(
-                "Login successful",
-                schema=openapi.Schema(
-                    type=openapi.TYPE_OBJECT,
-                    properties={
-                        "access": openapi.Schema(type=openapi.TYPE_STRING),
-                        "refresh": openapi.Schema(type=openapi.TYPE_STRING),
-                        "user": openapi.Schema(type=openapi.TYPE_OBJECT),
-                    },
-                ),
-            ),
-            400: "Invalid credentials",
+    user = get_object_or_404(User, email=serializer.validated_data["email"])
+
+    if user.is_email_verified:
+        return Response({"detail": "Email is already verified."}, status=status.HTTP_400_BAD_REQUEST)
+
+    success, result = verify_otp(user, serializer.validated_data["otp_code"], "email_verification")
+    if not success:
+        return Response({"detail": result}, status=status.HTTP_400_BAD_REQUEST)
+
+    user.is_email_verified = True
+    user.save()
+    return Response({"message": "Email verified successfully."}, status=status.HTTP_200_OK)
+
+
+@swagger_auto_schema(
+    method="post",
+    operation_summary="Login",
+    operation_description="Authenticate with email and password. Returns JWT tokens.",
+    request_body=LoginSerializer,
+    responses={200: "Login successful", 400: "Invalid credentials"},
+    tags=["Auth"],
+)
+@api_view(["POST"])
+def login(request):
+    serializer = LoginSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    user = authenticate(email=serializer.validated_data["email"], password=serializer.validated_data["password"])
+    if not user:
+        return Response({"detail": "Invalid email or password."}, status=status.HTTP_400_BAD_REQUEST)
+
+    if not user.is_email_verified:
+        return Response({"detail": "Email is not verified."}, status=status.HTTP_400_BAD_REQUEST)
+
+    tokens = get_tokens_for_user(user)
+    return Response({
+        "message": "Login successful.",
+        "access": tokens["access"],
+        "refresh": tokens["refresh"],
+        "user": UserSerializer(user).data,
+    })
+
+
+@swagger_auto_schema(
+    method="post",
+    operation_summary="Resend OTP",
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=["email", "otp_type"],
+        properties={
+            "email": openapi.Schema(type=openapi.TYPE_STRING, format="email"),
+            "otp_type": openapi.Schema(type=openapi.TYPE_STRING, enum=["email_verification", "password_reset"]),
         },
-        tags=["Auth"],
-    )
-    def post(self, request):
-        serializer = LoginSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        user = serializer.validated_data["user"]
-        tokens = get_tokens_for_user(user)
-        return Response({"access": tokens["access"], "refresh": tokens["refresh"], "user": UserSerializer(user).data})
+    ),
+    responses={200: "OTP resent.", 404: "User not found."},
+    tags=["Auth"],
+)
+@api_view(["POST"])
+def resend_otp(request):
+    email = request.data.get("email")
+    otp_type = request.data.get("otp_type")
+
+    if not email or not otp_type:
+        return Response({"detail": "email and otp_type are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+    if otp_type not in ["email_verification", "password_reset"]:
+        return Response({"detail": "Invalid otp_type."}, status=status.HTTP_400_BAD_REQUEST)
+
+    user = get_object_or_404(User, email=email)
+    otp = create_otp(user, otp_type)
+    send_otp_email(user, otp.otp_code, otp_type)
+    return Response({"message": "OTP resent successfully."}, status=status.HTTP_200_OK)
 
 
-class LogoutView(APIView):
-    permission_classes = [IsAuthenticated]
+@swagger_auto_schema(
+    method="post",
+    operation_summary="Send password reset OTP",
+    request_body=SendOTPSerializer,
+    responses={200: "OTP sent if email is registered."},
+    tags=["Auth"],
+)
+@api_view(["POST"])
+def send_password_reset_otp(request):
+    serializer = SendOTPSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    @swagger_auto_schema(
-        operation_summary="Logout",
-        operation_description="Blacklists the refresh token.",
-        request_body=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            required=["refresh"],
-            properties={"refresh": openapi.Schema(type=openapi.TYPE_STRING)},
-        ),
-        responses={205: "Logged out.", 400: "Invalid token."},
-        tags=["Auth"],
-        security=[{"Bearer": []}],
-    )
-    def post(self, request):
-        from rest_framework_simplejwt.tokens import RefreshToken
-        from rest_framework_simplejwt.exceptions import TokenError
-        try:
-            token = RefreshToken(request.data.get("refresh"))
-            token.blacklist()
-            return Response({"detail": "Successfully logged out."}, status=status.HTTP_205_RESET_CONTENT)
-        except TokenError:
-            return Response({"detail": "Invalid token."}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        user = User.objects.get(email=serializer.validated_data["email"])
+        otp = create_otp(user, "password_reset")
+        send_otp_email(user, otp.otp_code, "password_reset")
+    except User.DoesNotExist:
+        pass
+
+    return Response({"message": "If this email is registered, an OTP has been sent."}, status=status.HTTP_200_OK)
 
 
-class ResendOTPView(APIView):
-    permission_classes = [AllowAny]
+@swagger_auto_schema(
+    method="post",
+    operation_summary="Verify password reset OTP",
+    request_body=OTPVerifySerializer,
+    responses={200: "OTP is valid.", 400: "Invalid OTP"},
+    tags=["Auth"],
+)
+@api_view(["POST"])
+def verify_password_reset_otp(request):
+    serializer = OTPVerifySerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    @swagger_auto_schema(
-        operation_summary="Resend OTP",
-        request_body=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            required=["email", "otp_type"],
-            properties={
-                "email": openapi.Schema(type=openapi.TYPE_STRING, format="email"),
-                "otp_type": openapi.Schema(type=openapi.TYPE_STRING, enum=["email_verification", "password_reset"]),
-            },
-        ),
-        responses={200: "OTP resent.", 404: "User not found."},
-        tags=["Auth"],
-    )
-    def post(self, request):
-        user = get_object_or_404(User, email=request.data.get("email"))
-        otp_type = request.data.get("otp_type")
-        otp = create_otp(user, otp_type)
-        send_otp_email(user, otp.otp_code, otp_type)
-        return Response({"detail": "OTP resent."}, status=status.HTTP_200_OK)
+    user = get_object_or_404(User, email=serializer.validated_data["email"])
+    success, result = verify_otp(user, serializer.validated_data["otp_code"], "password_reset")
+    if not success:
+        return Response({"detail": result}, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response({"message": "OTP verified successfully."}, status=status.HTTP_200_OK)
 
 
-class SendPasswordResetOTPView(APIView):
-    permission_classes = [AllowAny]
+@swagger_auto_schema(
+    method="post",
+    operation_summary="Reset password",
+    request_body=ResetPasswordSerializer,
+    responses={200: "Password reset successfully.", 400: "Validation error"},
+    tags=["Auth"],
+)
+@api_view(["POST"])
+def reset_password(request):
+    serializer = ResetPasswordSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    @swagger_auto_schema(
-        operation_summary="Send password reset OTP",
-        request_body=SendOTPSerializer,
-        responses={200: "OTP sent if email is registered."},
-        tags=["Auth"],
-    )
-    def post(self, request):
-        serializer = SendOTPSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        try:
-            user = User.objects.get(email=serializer.validated_data["email"])
-            otp = create_otp(user, "password_reset")
-            send_otp_email(user, otp.otp_code, "password_reset")
-        except User.DoesNotExist:
-            pass
-        return Response({"detail": "If this email is registered, an OTP has been sent."}, status=status.HTTP_200_OK)
-
-
-class VerifyPasswordResetOTPView(APIView):
-    permission_classes = [AllowAny]
-
-    @swagger_auto_schema(
-        operation_summary="Verify password reset OTP",
-        request_body=OTPVerifySerializer,
-        responses={200: "OTP is valid.", 400: "Invalid OTP"},
-        tags=["Auth"],
-    )
-    def post(self, request):
-        serializer = OTPVerifySerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        user = get_object_or_404(User, email=serializer.validated_data["email"])
-        success, result = verify_otp(user, serializer.validated_data["otp_code"], "password_reset")
-        if not success:
-            return Response({"detail": result}, status=status.HTTP_400_BAD_REQUEST)
-        return Response({"detail": "OTP verified."}, status=status.HTTP_200_OK)
-
-
-class ResetPasswordView(APIView):
-    permission_classes = [AllowAny]
-
-    @swagger_auto_schema(
-        operation_summary="Reset password",
-        request_body=ResetPasswordSerializer,
-        responses={200: "Password reset successfully.", 400: "Validation error"},
-        tags=["Auth"],
-    )
-    def post(self, request):
-        serializer = ResetPasswordSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        user = get_object_or_404(User, email=serializer.validated_data["email"])
-        success, result = verify_otp(user, serializer.validated_data["otp_code"], "password_reset")
-        if not success:
-            return Response({"detail": result}, status=status.HTTP_400_BAD_REQUEST)
-        user.set_password(serializer.validated_data["new_password"])
-        user.save()
-        return Response({"detail": "Password reset successfully."}, status=status.HTTP_200_OK)
+    user = get_object_or_404(User, email=serializer.validated_data["email"])
+    user.set_password(serializer.validated_data["new_password"])
+    user.save()
+    return Response({"message": "Password reset successfully."}, status=status.HTTP_200_OK)
 
 
 # ═══════════════════════════════════════════════════════
 # PROFILE
 # ═══════════════════════════════════════════════════════
 
-class ProfileView(APIView):
-    permission_classes = [IsAuthenticated]
-    parser_classes = [MultiPartParser, FormParser, JSONParser]
-
-    @swagger_auto_schema(
-        operation_summary="Get profile",
-        operation_description="Returns user profile, subscription info, and activity summary.",
-        responses={200: UserSerializer},
-        tags=["Profile"],
-        security=[{"Bearer": []}],
-    )
-    def get(self, request):
-        subscription = getattr(request.user, "subscription", None)
-        activity = get_activity_summary(request.user)
-        return Response({
-            "user": UserSerializer(request.user).data,
-            "subscription": SubscriptionSerializer(subscription).data if subscription else None,
-            "activity_summary": activity,
-        })
-
-    @swagger_auto_schema(
-        operation_summary="Update profile",
-        request_body=EditProfileSerializer,
-        responses={200: UserSerializer, 400: "Validation error"},
-        tags=["Profile"],
-        security=[{"Bearer": []}],
-    )
-    def patch(self, request):
-        serializer = EditProfileSerializer(request.user, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
-        return Response(UserSerializer(request.user).data)
+@swagger_auto_schema(
+    method="get",
+    operation_summary="Get profile",
+    operation_description="Returns user profile, subscription info, and activity summary.",
+    responses={200: UserSerializer},
+    tags=["Profile"],
+    security=[{"Bearer": []}],
+)
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+@authentication_classes([JWTAuthentication])
+def get_profile(request):
+    subscription = getattr(request.user, "subscription", None)
+    activity = get_activity_summary(request.user)
+    return Response({
+        "user": UserSerializer(request.user, context={'request': request}).data,
+        "subscription": SubscriptionSerializer(subscription).data if subscription else None,
+        "activity_summary": activity,
+    })
 
 
-class ChangePasswordView(APIView):
-    permission_classes = [IsAuthenticated]
+@swagger_auto_schema(
+    method="patch",
+    operation_summary="Update profile",
+    request_body=EditProfileSerializer,
+    responses={200: UserSerializer, 400: "Validation error"},
+    tags=["Profile"],
+    security=[{"Bearer": []}],
+)
+@api_view(["PATCH"])
+@permission_classes([IsAuthenticated])
+@authentication_classes([JWTAuthentication])
+@parser_classes([MultiPartParser, FormParser])
+def update_profile(request):
+    serializer = EditProfileSerializer(request.user, data=request.data, partial=True)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    @swagger_auto_schema(
-        operation_summary="Change password",
-        request_body=ChangePasswordSerializer,
-        responses={200: "Password changed successfully.", 400: "Validation error"},
-        tags=["Profile"],
-        security=[{"Bearer": []}],
-    )
-    def post(self, request):
-        serializer = ChangePasswordSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        if not request.user.check_password(serializer.validated_data["current_password"]):
-            return Response({"detail": "Current password is incorrect."}, status=status.HTTP_400_BAD_REQUEST)
-        request.user.set_password(serializer.validated_data["new_password"])
-        request.user.save()
-        return Response({"detail": "Password changed successfully."}, status=status.HTTP_200_OK)
+    serializer.save()
+    return Response({
+        "message": "Profile updated successfully.",
+        "user": UserSerializer(request.user, context={'request': request}).data,
+    }, status=status.HTTP_200_OK)
 
 
-class DeleteAccountView(APIView):
-    permission_classes = [IsAuthenticated]
+@swagger_auto_schema(
+    method="post",
+    operation_summary="Change password",
+    request_body=ChangePasswordSerializer,
+    responses={200: "Password changed successfully.", 400: "Validation error"},
+    tags=["Profile"],
+    security=[{"Bearer": []}],
+)
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@authentication_classes([JWTAuthentication])
+def change_password(request):
+    serializer = ChangePasswordSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    @swagger_auto_schema(
-        operation_summary="Delete account",
-        operation_description="Permanently deletes the authenticated user's account.",
-        responses={204: "Account deleted."},
-        tags=["Profile"],
-        security=[{"Bearer": []}],
-    )
-    def delete(self, request):
-        request.user.delete()
-        return Response({"detail": "Account deleted."}, status=status.HTTP_204_NO_CONTENT)
+    if not request.user.check_password(serializer.validated_data["current_password"]):
+        return Response({"detail": "Current password is incorrect."}, status=status.HTTP_400_BAD_REQUEST)
+
+    request.user.set_password(serializer.validated_data["new_password"])
+    request.user.save()
+    return Response({"message": "Password changed successfully."}, status=status.HTTP_200_OK)
+
+
+@swagger_auto_schema(
+    method="delete",
+    operation_summary="Delete account",
+    operation_description="Permanently deletes the authenticated user's account.",
+    responses={200: "Account deleted."},
+    tags=["Profile"],
+    security=[{"Bearer": []}],
+)
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+@authentication_classes([JWTAuthentication])
+def delete_account(request):
+    request.user.delete()
+    return Response({"message": "Account deleted successfully."}, status=status.HTTP_200_OK)

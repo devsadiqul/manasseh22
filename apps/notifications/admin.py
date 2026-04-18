@@ -13,11 +13,11 @@ class NotificationAdmin(admin.ModelAdmin):
     fieldsets = (
         (None, {"fields": ("id", "notification_type", "title", "message")}),
         ("Users", {"fields": ("recipient", "sender")}),
-        ("Related Objects", {"fields": ("related_group", "related_task")}),
+        ("Related Objects", {"fields": ("related_event", "related_task")}),
         ("Status", {"fields": ("is_read", "created_at")}),
     )
 
     list_per_page = 50
 
     def get_queryset(self, request):
-        return super().get_queryset(request).select_related("recipient", "sender", "related_group", "related_task")
+        return super().get_queryset(request).select_related("recipient", "sender", "related_event", "related_task")
