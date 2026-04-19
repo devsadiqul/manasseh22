@@ -11,9 +11,12 @@ from django.db.models import Count, Q
 from django.db.models.functions import TruncMonth
 from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404
+from apps.notifications.models import Notification
 from apps.subscriptions.models import Subscription
 from apps.tasks.models import Event, Task
 from .serializers import (
+    BroadcastNotificationSerializer,
+    BroadcastSendSerializer,
     DashboardOverviewSerializer,
     DashboardEventSerializer,
     DashboardUserSerializer,
@@ -67,6 +70,35 @@ def user_growth(request):
         .annotate(count=Count("id"))
         .order_by("month")
     )
+    result = [
+        {"month": item["month"].strftime("%b"), "count": item["count"]}
+        for item in data
+    ]
+    return Response(UserGrowthSerializer(result, many=True).data)
+
+
+@swagger_auto_schema(
+    method="get",
+    operation_summary="Subscription growth chart",
+    operation_description="Returns monthly premium subscription count for the last 6 months.",
+    responses={200: UserGrowthSerializer(many=True)},
+    tags=["Dashboard"],
+    security=[{"Bearer": []}],
+)
+@api_view(["GET"])
+@permission_classes([IsAuthenticated, IsAdminUser])
+@authentication_classes([JWTAuthentication])
+def subscription_growth(request):
+    six_months_ago = timezone.now() - timezone.timedelta(days=180)
+    data = (
+        Subscription.objects
+        .filter(plan="premium", created_at__gte=six_months_ago)
+        .annotate(month=TruncMonth("created_at"))
+        .values("month")
+        .annotate(count=Count("id"))
+        .order_by("month")
+    )
+
     result = [
         {"month": item["month"].strftime("%b"), "count": item["count"]}
         for item in data
@@ -253,7 +285,7 @@ def dashboard_user_detail(request, user_id):
 
 @swagger_auto_schema(
     method="patch",
-    operation_summary="Toggle user active status",
+    operation_summary="Set user status",
     operation_description="Admin activates or deactivates a user account.",
     request_body=openapi.Schema(
         type=openapi.TYPE_OBJECT,
@@ -269,7 +301,7 @@ def dashboard_user_detail(request, user_id):
 @api_view(["PATCH"])
 @permission_classes([IsAuthenticated, IsAdminUser])
 @authentication_classes([JWTAuthentication])
-def dashboard_user_toggle_active(request, user_id):
+def dashboard_user_set_status(request, user_id):
     user = get_object_or_404(User, id=user_id)
 
     is_active = request.data.get("is_active")
@@ -302,3 +334,72 @@ def dashboard_user_delete(request, user_id):
     user = get_object_or_404(User, id=user_id)
     user.delete()
     return Response({"message": "User deleted successfully."}, status=status.HTTP_200_OK)
+
+
+@swagger_auto_schema(
+    method="post",
+    operation_summary="Send broadcast notification",
+    operation_description="Admin sends a notification to all active users.",
+    request_body=BroadcastSendSerializer,
+    responses={201: "Notification sent", 400: "Validation error"},
+    tags=["Dashboard"],
+    security=[{"Bearer": []}],
+)
+@api_view(["POST"])
+@permission_classes([IsAuthenticated, IsAdminUser])
+@authentication_classes([JWTAuthentication])
+def dashboard_broadcast_send(request):
+    serializer = BroadcastSendSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    title = serializer.validated_data["title"]
+    message = serializer.validated_data["message"]
+
+    users = User.objects.filter(is_active=True).exclude(id=request.user.id)
+    Notification.objects.bulk_create([
+        Notification(
+            recipient=user,
+            sender=request.user,
+            notification_type="broadcast",
+            title=title,
+            message=message,
+        )
+        for user in users
+    ])
+
+    return Response({"message": "Broadcast notification sent successfully."}, status=status.HTTP_201_CREATED)
+
+
+@swagger_auto_schema(
+    method="get",
+    operation_summary="List broadcast notifications",
+    operation_description="Returns recent broadcast notifications sent by admin with pagination.",
+    manual_parameters=[
+        openapi.Parameter("page", openapi.IN_QUERY, description="Page number", type=openapi.TYPE_INTEGER),
+    ],
+    responses={200: BroadcastNotificationSerializer(many=True)},
+    tags=["Dashboard"],
+    security=[{"Bearer": []}],
+)
+@api_view(["GET"])
+@permission_classes([IsAuthenticated, IsAdminUser])
+@authentication_classes([JWTAuthentication])
+def dashboard_broadcast_list(request):
+    broadcasts = (
+        Notification.objects
+        .filter(notification_type="broadcast", sender=request.user)
+        .order_by("-created_at")
+        .values("title", "message", "created_at")
+        .distinct()
+    )
+
+    paginator = Paginator(broadcasts, 10)
+    page = paginator.get_page(request.query_params.get("page", 1))
+
+    return Response({
+        "total": paginator.count,
+        "total_pages": paginator.num_pages,
+        "current_page": page.number,
+        "notifications": BroadcastNotificationSerializer(list(page), many=True).data,
+    })

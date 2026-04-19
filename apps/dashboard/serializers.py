@@ -20,19 +20,16 @@ class UserGrowthSerializer(serializers.Serializer):
 
 
 class DashboardEventSerializer(serializers.ModelSerializer):
-    member_count = serializers.IntegerField(read_only=True)
+    event_name = serializers.CharField(source="name")
+    members = serializers.IntegerField(source="member_count")
     created_by = serializers.SerializerMethodField()
 
     class Meta:
         model = Event
-        fields = ["id", "name", "member_count", "event_date", "created_by"]
+        fields = ["id", "event_name", "members", "event_date", "created_by"]
 
     def get_created_by(self, obj):
-        return {
-            "id": str(obj.created_by.id),
-            "name": obj.created_by.name,
-            "email": obj.created_by.email,
-        }
+        return obj.created_by.name
 
 
 class SubscriptionDetailSerializer(serializers.ModelSerializer):
@@ -103,3 +100,14 @@ class DashboardUserDetailSerializer(serializers.ModelSerializer):
                 "is_active": True,
                 "is_premium": False,
             }
+            
+            
+class BroadcastSendSerializer(serializers.Serializer):
+    title = serializers.CharField(max_length=255)
+    message = serializers.CharField()
+    
+
+class BroadcastNotificationSerializer(serializers.Serializer):
+    title = serializers.CharField()
+    message = serializers.CharField()
+    created_at = serializers.DateTimeField()

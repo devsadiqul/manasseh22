@@ -12,6 +12,7 @@ class Notification(models.Model):
         ("task_comment", "Task Comment"),
         ("task_assigned", "Task Assigned"),
         ("premium_upsell", "Premium Upsell"),
+        ("broadcast", "Broadcast"),
     ]
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     recipient = models.ForeignKey(
