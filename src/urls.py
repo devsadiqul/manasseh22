@@ -14,6 +14,7 @@ schema_view = get_schema_view(
         description="Shared event planning — weddings, holidays, anniversaries, and more.",
         contact=openapi.Contact(email="support@eventmate.app"),
     ),
+    url='https://sound-mite-exotic.ngrok-free.app/api/v1',
     public=True,
     permission_classes=[AllowAny],
 )
