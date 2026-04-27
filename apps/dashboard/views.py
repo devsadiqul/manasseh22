@@ -80,7 +80,7 @@ def user_growth(request):
 @swagger_auto_schema(
     method="get",
     operation_summary="Subscription growth chart",
-    operation_description="Returns monthly premium subscription count for the last 6 months.",
+    operation_description="Returns monthly subscription count (free & premium) for the last 6 months.",
     responses={200: UserGrowthSerializer(many=True)},
     tags=["Dashboard"],
     security=[{"Bearer": []}],
@@ -92,15 +92,19 @@ def subscription_growth(request):
     six_months_ago = timezone.now() - timezone.timedelta(days=180)
     data = (
         Subscription.objects
-        .filter(plan="premium", created_at__gte=six_months_ago)
+        .filter(created_at__gte=six_months_ago)
         .annotate(month=TruncMonth("created_at"))
-        .values("month")
+        .values("month", "plan")
         .annotate(count=Count("id"))
-        .order_by("month")
+        .order_by("month", "plan")
     )
 
     result = [
-        {"month": item["month"].strftime("%b"), "count": item["count"]}
+        {
+            "month": item["month"].strftime("%b"),
+            "plan": item["plan"],
+            "count": item["count"],
+        }
         for item in data
     ]
     return Response(UserGrowthSerializer(result, many=True).data)
