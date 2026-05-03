@@ -17,15 +17,54 @@ from .serializers import (
 )
 from django.db.models import Q
 from drf_yasg import openapi
+from django.utils import timezone
 
 
 # ═══════════════════════════════════════════════════════
 # EVENT VIEWS
 # ═══════════════════════════════════════════════════════
+# @swagger_auto_schema(
+#     method="get",
+#     operation_summary="List events",
+#     operation_description="Returns events split into 'owned_events' and 'joined_events'. Filter via ?filter=upcoming or ?filter=past",
+#     responses={200: EventListSerializer(many=True)},
+#     tags=["Events"],
+#     security=[{"Bearer": []}],
+# )
+# @api_view(["GET"])
+# @permission_classes([IsAuthenticated])
+# @authentication_classes([JWTAuthentication])
+# def event_list(request):
+
+#     filter_type = request.query_params.get("filter", "upcoming")
+
+#     member_event_ids = EventMember.objects.filter(user=request.user).values_list("event_id", flat=True)
+#     events = (
+#         Event.objects
+#         .filter(id__in=member_event_ids)
+#         .prefetch_related("members")
+#     )
+
+#     now = timezone.now()
+#     if filter_type == "past":
+#         events = events.filter(event_date__lt=now)
+#     else:
+#         events = events.filter(event_date__gte=now)
+
+#     owned = [e for e in events if e.created_by == request.user]
+#     joined = [e for e in events if e.created_by != request.user]
+
+#     return Response({
+#         "filter": filter_type,
+#         "owned_events": EventListSerializer(owned, many=True, context={"request": request}).data,
+#         "joined_events": EventListSerializer(joined, many=True, context={"request": request}).data,
+#     })
+
+
 @swagger_auto_schema(
     method="get",
     operation_summary="List events",
-    operation_description="Returns events split into 'owned_events' and 'joined_events'. Filter via ?filter=upcoming or ?filter=past",
+    operation_description="Returns events split into owned_events and joined_events. Filter via ?filter=all | upcoming | past",
     responses={200: EventListSerializer(many=True)},
     tags=["Events"],
     security=[{"Bearer": []}],
@@ -34,32 +73,35 @@ from drf_yasg import openapi
 @permission_classes([IsAuthenticated])
 @authentication_classes([JWTAuthentication])
 def event_list(request):
-    from django.utils import timezone
 
-    filter_type = request.query_params.get("filter", "upcoming")
-
-    member_event_ids = EventMember.objects.filter(user=request.user).values_list("event_id", flat=True)
-    events = (
-        Event.objects
-        .filter(id__in=member_event_ids)
-        .prefetch_related("members")
-    )
-
+    filter_type = request.query_params.get("filter", "all")
     now = timezone.now()
+
+    events = Event.objects.filter(
+        Q(created_by=request.user) |
+        Q(members__user=request.user)
+    ).select_related("created_by").prefetch_related("members").distinct()
+
     if filter_type == "past":
         events = events.filter(event_date__lt=now)
-    else:
+    elif filter_type == "upcoming":
         events = events.filter(event_date__gte=now)
 
-    owned = [e for e in events if e.created_by == request.user]
-    joined = [e for e in events if e.created_by != request.user]
+    events = events.order_by("-event_date")
+
+    owned_events = events.filter(created_by=request.user)
+    joined_events = events.exclude(created_by=request.user)
 
     return Response({
         "filter": filter_type,
-        "owned_events": EventListSerializer(owned, many=True, context={"request": request}).data,
-        "joined_events": EventListSerializer(joined, many=True, context={"request": request}).data,
+        "owned_events": EventListSerializer(
+            owned_events, many=True, context={"request": request}
+        ).data,
+        "joined_events": EventListSerializer(
+            joined_events, many=True, context={"request": request}
+        ).data,
     })
-
+    
 
 # @swagger_auto_schema(
 #     method="post",
