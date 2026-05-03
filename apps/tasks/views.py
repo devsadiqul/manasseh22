@@ -118,12 +118,96 @@ def event_list(request):
 #     }, status=status.HTTP_201_CREATED)
 
 
+# @swagger_auto_schema(
+#     method="post",
+#     operation_summary="Create an event",
+#     operation_description="Free plan: max 3 events. Premium: unlimited.",
+#     request_body=CreateEventSerializer,
+#     responses={201: EventSerializer, 400: "Validation error", 403: "Event limit reached"},
+#     tags=["Events"],
+#     security=[{"Bearer": []}],
+# )
+# @api_view(["POST"])
+# @permission_classes([IsAuthenticated])
+# @authentication_classes([JWTAuthentication])
+# @parser_classes([MultiPartParser, FormParser])
+# def event_create(request):
+#     subscription = getattr(request.user, "subscription", None)
+#     is_premium = subscription and subscription.is_premium
+
+#     if not is_premium:
+#         with transaction.atomic():
+#             owned_count = (
+#                 Event.objects
+#                 .select_for_update()
+#                 .filter(created_by=request.user)
+#                 .count()
+#             )
+#             if owned_count >= 3:
+#                 return Response(
+#                     {"detail": "Free plan allows a maximum of 3 events. Upgrade to Premium for unlimited events."},
+#                     status=status.HTTP_403_FORBIDDEN,
+#                 )
+
+#     invite_members = request.data.getlist("invite_members")
+
+#     if len(invite_members) == 1 and isinstance(invite_members[0], str) and "," in invite_members[0]:
+#         emails = [e.strip() for e in invite_members[0].split(",") if e.strip()]
+#     else:
+#         emails = [e.strip() for e in invite_members if isinstance(e, str) and e.strip()]
+
+#     data = request.data
+
+#     serializer = CreateEventSerializer(data={
+#         **data,
+#         "invite_members": emails
+#     })
+
+#     if not serializer.is_valid():
+#         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+#     invite_emails = serializer.validated_data.pop("invite_members", [])
+
+#     event = serializer.save(created_by=request.user)
+
+#     EventMember.objects.create(event=event, user=request.user, role="admin")
+
+#     for email in invite_emails:
+#         try:
+#             member_user = User.objects.get(email=email)
+
+#             EventMember.objects.get_or_create(
+#                 event=event,
+#                 user=member_user
+#             )
+
+#             send_notification(
+#                 recipient=member_user,
+#                 sender=request.user,
+#                 notification_type="member_added",
+#                 title="You were added to an event",
+#                 message=f"{request.user.name} added you to '{event.name}'.",
+#                 related_event=event,
+#             )
+
+#         except User.DoesNotExist:
+#             continue
+
+#     return Response(
+#         {
+#             "message": "Event created successfully.",
+#             "event": EventSerializer(event, context={"request": request}).data,
+#         },
+#         status=status.HTTP_201_CREATED,
+#     )
+
+
 @swagger_auto_schema(
     method="post",
     operation_summary="Create an event",
-    operation_description="Free plan: max 3 events. Premium: unlimited.",
+    operation_description="Create event (no limit for now).",
     request_body=CreateEventSerializer,
-    responses={201: EventSerializer, 400: "Validation error", 403: "Event limit reached"},
+    responses={201: EventSerializer, 400: "Validation error"},
     tags=["Events"],
     security=[{"Bearer": []}],
 )
@@ -132,79 +216,43 @@ def event_list(request):
 @authentication_classes([JWTAuthentication])
 @parser_classes([MultiPartParser, FormParser])
 def event_create(request):
-    subscription = getattr(request.user, "subscription", None)
-    is_premium = subscription and subscription.is_premium
 
-    # 🔒 Free plan limit check
-    if not is_premium:
-        with transaction.atomic():
-            owned_count = Event.objects.select_for_update().filter(created_by=request.user).count()
-            if owned_count >= 3:
-                return Response(
-                    {"detail": "Free plan allows a maximum of 3 events. Upgrade to Premium for unlimited events."},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
+    invite_members = request.data.getlist("invite_members")
 
-    # 🧠 Normalize invite_members (IMPORTANT FIX)
-    data = request.data.copy()
-
-    invite_members = data.getlist("invite_members")
-
-    # Case 1: Single comma-separated string
-    if len(invite_members) == 1 and isinstance(invite_members[0], str) and "," in invite_members[0]:
-        emails = [email.strip() for email in invite_members[0].split(",") if email.strip()]
-        data.setlist("invite_members", emails)
-
-    # Case 2: Already multiple values → clean spaces
+    if len(invite_members) == 1 and "," in invite_members[0]:
+        emails = [e.strip() for e in invite_members[0].split(",") if e.strip()]
     else:
-        cleaned = [email.strip() for email in invite_members if isinstance(email, str) and email.strip()]
-        data.setlist("invite_members", cleaned)
+        emails = [e.strip() for e in invite_members if e.strip()]
 
-    # 🔍 Debug (optional)
-    print("Final invite_members:", data.getlist("invite_members"))
+    data = request.data.copy()
+    data.setlist("invite_members", emails)
 
     serializer = CreateEventSerializer(data=data)
 
     if not serializer.is_valid():
-        print("VALIDATION ERROR:", serializer.errors)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     invite_emails = serializer.validated_data.pop("invite_members", [])
 
-    # 💾 Create event
     event = serializer.save(created_by=request.user)
 
-    # 👤 Add creator as admin
     EventMember.objects.create(event=event, user=request.user, role="admin")
 
-    # 👥 Add invited members
     for email in invite_emails:
         try:
             member_user = User.objects.get(email=email)
-
-            EventMember.objects.get_or_create(
-                event=event,
-                user=member_user
-            )
-
-            send_notification(
-                recipient=member_user,
-                sender=request.user,
-                notification_type="member_added",
-                title="You were added to an event",
-                message=f"{request.user.name} added you to '{event.name}'.",
-                related_event=event,
-            )
+            EventMember.objects.get_or_create(event=event, user=member_user)
 
         except User.DoesNotExist:
-            # Optional: later you can handle pending invites here
-            print(f"User not found for email: {email}")
-            pass
+            continue
 
-    return Response({
-        "message": "Event created successfully.",
-        "event": EventSerializer(event, context={"request": request}).data,
-    }, status=status.HTTP_201_CREATED)
+    return Response(
+        {
+            "message": "Event created successfully.",
+            "event": EventSerializer(event, context={"request": request}).data,
+        },
+        status=status.HTTP_201_CREATED,
+    )
 
 
 @swagger_auto_schema(
