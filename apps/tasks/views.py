@@ -64,7 +64,7 @@ from django.utils import timezone
 @swagger_auto_schema(
     method="get",
     operation_summary="List events",
-    operation_description="Returns events split into owned_events and joined_events. Filter via ?filter=all | upcoming | past",
+    operation_description="Returns events split into owned_events and joined_events. Filter via ?filter=past | upcoming",
     responses={200: EventListSerializer(many=True)},
     tags=["Events"],
     security=[{"Bearer": []}],
@@ -74,7 +74,7 @@ from django.utils import timezone
 @authentication_classes([JWTAuthentication])
 def event_list(request):
 
-    filter_type = request.query_params.get("filter", "all")
+    filter_type = request.query_params.get("filter", "upcoming")
     now = timezone.now()
 
     events = Event.objects.filter(
@@ -84,7 +84,7 @@ def event_list(request):
 
     if filter_type == "past":
         events = events.filter(event_date__lt=now)
-    elif filter_type == "upcoming":
+    else:
         events = events.filter(event_date__gte=now)
 
     events = events.order_by("-event_date")

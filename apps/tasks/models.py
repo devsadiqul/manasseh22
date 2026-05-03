@@ -8,9 +8,9 @@ import uuid
 class Event(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255)
-    description = models.TextField(blank=True, null=True)
-    cover_image = models.ImageField(upload_to="event_covers/", blank=True, null=True)
-    event_date = models.DateTimeField(blank=True, null=True)
+    description = models.TextField()
+    cover_image = models.ImageField(upload_to="event_covers/")
+    event_date = models.DateTimeField()
     is_featured = models.BooleanField(default=False)
     invite_token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     created_by = models.ForeignKey(
