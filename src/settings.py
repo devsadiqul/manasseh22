@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     'apps.subscriptions',
     'apps.tasks',
     'apps.legal',
+    'apps.core',
     'apps.notifications',
     'apps.dashboard',
 ]

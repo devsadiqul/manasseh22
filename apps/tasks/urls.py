@@ -15,6 +15,8 @@ urlpatterns = [
     path("events/<uuid:event_id>/members/", views.event_member_list, name="event-member-list"),
     path("events/<uuid:event_id>/members/add/", views.event_member_add, name="event-member-add"),
     path("events/<uuid:event_id>/members/<int:member_id>/remove/", views.event_member_remove, name="event-member-remove"),
+    path("events/<uuid:event_id>/invite-link/", views.event_invite_link, name="event-invite-link"),
+    path("events/join/<uuid:token>/", views.event_join_by_invite, name="event-join-by-invite"),
 
     # Tasks
     path("tasks/my/", views.my_task_list, name="my-task-list"),

@@ -222,3 +222,7 @@ class CreateTaskSerializer(serializers.ModelSerializer):
     class Meta:
         model = Task
         fields = ["name", "description", "assigned_to_email", "due_date", "priority"]
+        
+        
+class EventInviteLinkSerializer(serializers.Serializer):
+    invite_link = serializers.CharField()

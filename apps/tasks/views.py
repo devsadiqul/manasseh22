@@ -13,7 +13,8 @@ from apps.notifications.utils import send_notification
 from .models import Event, EventMember, Task
 from .serializers import (
     EventListSerializer, EventSerializer, CreateEventSerializer, EventMemberSerializer, AddMemberSerializer,
-    TaskSerializer, TaskDetailSerializer, CreateTaskSerializer, TaskCommentSerializer, CreateCommentSerializer, MyTaskSerializer
+    TaskSerializer, TaskDetailSerializer, CreateTaskSerializer, TaskCommentSerializer, CreateCommentSerializer, MyTaskSerializer,
+    EventInviteLinkSerializer
 )
 from django.db.models import Q
 from drf_yasg import openapi
@@ -259,6 +260,9 @@ def event_list(request):
 @parser_classes([MultiPartParser, FormParser])
 def event_create(request):
 
+    # ---------------------------
+    # Handle invite members safely
+    # ---------------------------
     invite_members = request.data.getlist("invite_members")
 
     if len(invite_members) == 1 and "," in invite_members[0]:
@@ -266,8 +270,9 @@ def event_create(request):
     else:
         emails = [e.strip() for e in invite_members if e.strip()]
 
-    data = request.data.copy()
-    data.setlist("invite_members", emails)
+
+    data = request.data.dict()
+    data["invite_members"] = emails
 
     serializer = CreateEventSerializer(data=data)
 
@@ -284,7 +289,6 @@ def event_create(request):
         try:
             member_user = User.objects.get(email=email)
             EventMember.objects.get_or_create(event=event, user=member_user)
-
         except User.DoesNotExist:
             continue
 
@@ -508,6 +512,89 @@ def event_member_remove(request, event_id, member_id):
     membership = get_object_or_404(EventMember, event=event, id=member_id)
     membership.delete()
     return Response({"message": "Member removed successfully."}, status=status.HTTP_200_OK)
+
+
+@swagger_auto_schema(
+    method="get",
+    operation_summary="Get event invite link",
+    operation_description="Returns a shareable invite link for the event. Admin/owner only.",
+    responses={200: EventInviteLinkSerializer, 403: "Forbidden"},
+    tags=["Events"],
+    security=[{"Bearer": []}],
+)
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+@authentication_classes([JWTAuthentication])
+def event_invite_link(request, event_id):
+    event = get_object_or_404(Event, id=event_id)
+
+    is_admin_member = EventMember.objects.filter(
+        event=event, user=request.user, role="admin"
+    ).exists()
+
+    if event.created_by != request.user and not is_admin_member:
+        return Response(
+            {"detail": "Only the event owner or admins can access the invite link."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    invite_link = request.build_absolute_uri(
+        f"/api/events/join/{event.invite_token}/"
+    )
+
+    return Response({"invite_link": invite_link}, status=status.HTTP_200_OK)
+
+
+@swagger_auto_schema(
+    method="get",
+    operation_summary="Join event via invite link",
+    operation_description="Authenticated user joins the event using the invite token from the link.",
+    responses={
+        200: "Already a member",
+        201: "Joined successfully",
+        404: "Invalid or expired invite token",
+    },
+    tags=["Events"],
+    security=[{"Bearer": []}],
+)
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+@authentication_classes([JWTAuthentication])
+def event_join_by_invite(request, token):
+    event = get_object_or_404(Event, invite_token=token)
+
+    membership, created = EventMember.objects.get_or_create(
+        event=event,
+        user=request.user,
+        defaults={"role": "member"},
+    )
+
+    if not created:
+        return Response(
+            {"detail": "You are already a member of this event."},
+            status=status.HTTP_200_OK,
+        )
+
+    send_notification(
+        recipient=event.created_by,
+        sender=request.user,
+        notification_type="member_joined",
+        title="New member joined",
+        message=f"{request.user.name} joined '{event.name}' via invite link.",
+        related_event=event,
+    )
+
+    return Response(
+        {
+            "message": "Successfully joined the event.",
+            "event": {
+                "id": event.id,
+                "name": event.name,
+                "event_date": event.event_date,
+            },
+        },
+        status=status.HTTP_201_CREATED,
+    )
 
 
 # ═══════════════════════════════════════════════════════
