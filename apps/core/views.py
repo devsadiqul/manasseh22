@@ -7,6 +7,8 @@ from django.core.mail import EmailMessage
 from rest_framework import status
 from django.conf import settings
 from .models import FAQ, FAQCategory
+from django.db.models import Q
+from drf_yasg import openapi
 
 
 # Create your views here.
@@ -49,13 +51,13 @@ def send_message(request):
 @swagger_auto_schema(
     method='get',
     responses={200: FAQCategorySerializer(many=True)},
-    operation_summary="List all active FAQ categories with their FAQs",
+    operation_summary="List all active FAQ categories",
     tags=['FAQ']
 )
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def faq_category_list(request):
-    categories = FAQCategory.objects.prefetch_related('faqs').filter(is_active=True)
+    categories = FAQCategory.objects.filter(is_active=True)
     serializer = FAQCategorySerializer(categories, many=True)
     return Response(serializer.data)
 
@@ -119,6 +121,10 @@ def faq_category_delete(request, pk):
 
 @swagger_auto_schema(
     method='get',
+    manual_parameters=[
+        openapi.Parameter('category', openapi.IN_QUERY, description="Filter by category ID", type=openapi.TYPE_INTEGER),
+        openapi.Parameter('search', openapi.IN_QUERY, description="Search by question or answer", type=openapi.TYPE_STRING),
+    ],
     responses={200: FAQSerializer(many=True)},
     operation_summary="List all active FAQs",
     tags=['FAQ']
@@ -126,7 +132,22 @@ def faq_category_delete(request, pk):
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def faq_list(request):
-    faqs = FAQ.objects.select_related('category').filter(is_active=True)
+    faqs = FAQ.objects.select_related('category').filter(
+        is_active=True,
+        category__is_active=True
+    ).order_by('order')
+
+    category_id = request.query_params.get('category')
+    if category_id:
+        faqs = faqs.filter(category__id=category_id)
+
+    search = request.query_params.get('search')
+    if search:
+        faqs = faqs.filter(
+            Q(question__icontains=search) |
+            Q(answer__icontains=search)
+        )
+
     serializer = FAQSerializer(faqs, many=True)
     return Response(serializer.data)
 
@@ -176,7 +197,7 @@ def faq_detail(request, pk):
 @permission_classes([IsAdminUser])
 def faq_update(request, pk):
     try:
-        faq = FAQ.objects.get(pk=pk)
+        faq = FAQ.objects.get(pk=pk, is_active=True)
     except FAQ.DoesNotExist:
         return Response({'error': 'FAQ not found.'}, status=status.HTTP_404_NOT_FOUND)
     serializer = FAQSerializer(faq, data=request.data, partial=True)

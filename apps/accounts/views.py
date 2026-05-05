@@ -1,9 +1,8 @@
 from django.shortcuts import get_object_or_404
 from django.conf import settings
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes, parser_classes, authentication_classes
+from rest_framework.decorators import api_view, permission_classes, parser_classes
 from rest_framework.permissions import IsAuthenticated
-from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
 from rest_framework.response import Response
@@ -206,10 +205,6 @@ def reset_password(request):
     return Response({"message": "Password reset successfully."}, status=status.HTTP_200_OK)
 
 
-# ═══════════════════════════════════════════════════════
-# PROFILE
-# ═══════════════════════════════════════════════════════
-
 @swagger_auto_schema(
     method="get",
     operation_summary="Get profile",
@@ -220,7 +215,6 @@ def reset_password(request):
 )
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
-@authentication_classes([JWTAuthentication])
 def get_profile(request):
     subscription = getattr(request.user, "subscription", None)
     activity = get_activity_summary(request.user)
@@ -241,7 +235,6 @@ def get_profile(request):
 )
 @api_view(["PATCH"])
 @permission_classes([IsAuthenticated])
-@authentication_classes([JWTAuthentication])
 @parser_classes([MultiPartParser, FormParser])
 def update_profile(request):
     serializer = EditProfileSerializer(request.user, data=request.data, partial=True)
@@ -265,7 +258,6 @@ def update_profile(request):
 )
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
-@authentication_classes([JWTAuthentication])
 def change_password(request):
     serializer = ChangePasswordSerializer(data=request.data)
     if not serializer.is_valid():
@@ -289,7 +281,6 @@ def change_password(request):
 )
 @api_view(["DELETE"])
 @permission_classes([IsAuthenticated])
-@authentication_classes([JWTAuthentication])
 def delete_account(request):
     request.user.delete()
     return Response({"message": "Account deleted successfully."}, status=status.HTTP_200_OK)
@@ -407,7 +398,6 @@ def apple_login(request):
 )
 @api_view(["DELETE"])
 @permission_classes([IsAuthenticated])
-@authentication_classes([JWTAuthentication])
 def delete_account(request):
     user = request.user
     user.delete()

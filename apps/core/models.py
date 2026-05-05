@@ -4,9 +4,10 @@ from django.db import models
 # Create your models here.
 class FAQCategory(models.Model):
     name = models.CharField(max_length=150)
-    order = models.PositiveIntegerField(default=0)
+    order = models.PositiveIntegerField(default=0, unique=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ['order']
@@ -28,9 +29,11 @@ class FAQ(models.Model):
     order = models.PositiveIntegerField(default=0)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ['order']
+        unique_together = ['category', 'order']
         verbose_name = "FAQ"
         verbose_name_plural = "FAQs"
 

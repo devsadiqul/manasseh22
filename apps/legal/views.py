@@ -18,7 +18,6 @@ from .serializers import LegalSerializer
 )
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
-@authentication_classes([JWTAuthentication])
 def legal_upsert(request):
     document_type = request.data.get('document_type')
 

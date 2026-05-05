@@ -72,8 +72,9 @@ class Task(models.Model):
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True)
     assigned_to = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
-        null=True, blank=True, related_name="assigned_tasks"
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="assigned_tasks"
     )
     due_date = models.DateField(blank=True, null=True)
     priority = models.CharField(max_length=10, choices=PRIORITY_CHOICES, default="medium")

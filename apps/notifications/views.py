@@ -1,8 +1,7 @@
 from django.shortcuts import get_object_or_404
-from rest_framework.decorators import api_view, permission_classes, authentication_classes
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from rest_framework_simplejwt.authentication import JWTAuthentication
 from drf_yasg.utils import swagger_auto_schema
 from .models import Notification
 from .serializers import NotificationSerializer
@@ -18,7 +17,6 @@ from .serializers import NotificationSerializer
     security=[{"Bearer": []}],
 )
 @api_view(["GET"])
-@authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def notification_list(request):
     notifications = Notification.objects.filter(recipient=request.user)
@@ -38,7 +36,6 @@ def notification_list(request):
     security=[{"Bearer": []}],
 )
 @api_view(["POST"])
-@authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def notification_mark_all_read(request):
     Notification.objects.filter(recipient=request.user, is_read=False).update(is_read=True)
@@ -53,7 +50,6 @@ def notification_mark_all_read(request):
     security=[{"Bearer": []}],
 )
 @api_view(["PATCH"])
-@authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def notification_mark_read(request, notification_id):
     notification = get_object_or_404(Notification, id=notification_id, recipient=request.user)

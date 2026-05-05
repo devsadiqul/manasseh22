@@ -38,7 +38,6 @@ class UpgradeToPremiumView(APIView):
     def post(self, request):
         serializer = UpgradePlanSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        # In production: process payment_method_token with Stripe/etc. before activating
         subscription = activate_premium_subscription(request.user, serializer.validated_data["billing_cycle"])
         return Response({
             "detail": "You're now Premium! 🎉",

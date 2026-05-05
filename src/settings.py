@@ -194,3 +194,14 @@ SWAGGER_SETTINGS = {
 # Social authentication client IDs (for Google and Apple sign-in)
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 APPLE_CLIENT_ID = os.getenv("APPLE_CLIENT_ID")
+
+
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ),
+    'DEFAULT_PERMISSION_CLASSES': (
+        'rest_framework.permissions.AllowAny',
+    )
+}

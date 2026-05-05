@@ -1,5 +1,4 @@
 # views.py
-from django.db import transaction
 from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes, parser_classes, authentication_classes
@@ -21,46 +20,6 @@ from drf_yasg import openapi
 from django.utils import timezone
 
 
-# ═══════════════════════════════════════════════════════
-# EVENT VIEWS
-# ═══════════════════════════════════════════════════════
-# @swagger_auto_schema(
-#     method="get",
-#     operation_summary="List events",
-#     operation_description="Returns events split into 'owned_events' and 'joined_events'. Filter via ?filter=upcoming or ?filter=past",
-#     responses={200: EventListSerializer(many=True)},
-#     tags=["Events"],
-#     security=[{"Bearer": []}],
-# )
-# @api_view(["GET"])
-# @permission_classes([IsAuthenticated])
-# @authentication_classes([JWTAuthentication])
-# def event_list(request):
-
-#     filter_type = request.query_params.get("filter", "upcoming")
-
-#     member_event_ids = EventMember.objects.filter(user=request.user).values_list("event_id", flat=True)
-#     events = (
-#         Event.objects
-#         .filter(id__in=member_event_ids)
-#         .prefetch_related("members")
-#     )
-
-#     now = timezone.now()
-#     if filter_type == "past":
-#         events = events.filter(event_date__lt=now)
-#     else:
-#         events = events.filter(event_date__gte=now)
-
-#     owned = [e for e in events if e.created_by == request.user]
-#     joined = [e for e in events if e.created_by != request.user]
-
-#     return Response({
-#         "filter": filter_type,
-#         "owned_events": EventListSerializer(owned, many=True, context={"request": request}).data,
-#         "joined_events": EventListSerializer(joined, many=True, context={"request": request}).data,
-#     })
-
 
 @swagger_auto_schema(
     method="get",
@@ -72,7 +31,6 @@ from django.utils import timezone
 )
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
-@authentication_classes([JWTAuthentication])
 def event_list(request):
 
     filter_type = request.query_params.get("filter", "upcoming")
@@ -102,147 +60,6 @@ def event_list(request):
             joined_events, many=True, context={"request": request}
         ).data,
     })
-    
-
-# @swagger_auto_schema(
-#     method="post",
-#     operation_summary="Create an event",
-#     operation_description="Free plan: max 3 events. Premium: unlimited.",
-#     request_body=CreateEventSerializer,
-#     responses={201: EventSerializer, 400: "Validation error", 403: "Event limit reached"},
-#     tags=["Events"],
-#     security=[{"Bearer": []}],
-# )
-# @api_view(["POST"])
-# @permission_classes([IsAuthenticated])
-# @authentication_classes([JWTAuthentication])
-# @parser_classes([MultiPartParser, FormParser])
-# def event_create(request):
-#     subscription = getattr(request.user, "subscription", None)
-#     is_premium = subscription and subscription.is_premium
-
-#     if not is_premium:
-#         with transaction.atomic():
-#             owned_count = Event.objects.select_for_update().filter(created_by=request.user).count()
-#             if owned_count >= 3:
-#                 return Response(
-#                     {"detail": "Free plan allows a maximum of 3 events. Upgrade to Premium for unlimited events."},
-#                     status=status.HTTP_403_FORBIDDEN,
-#                 )
-                
-#     print("Creating event with data:", request.data)
-
-#     serializer = CreateEventSerializer(data=request.data)
-#     if not serializer.is_valid():
-#         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-#     invite_emails = serializer.validated_data.pop("invite_members", [])
-#     event = serializer.save(created_by=request.user)
-#     EventMember.objects.create(event=event, user=request.user, role="admin")
-
-#     for email in invite_emails:
-#         try:
-#             member_user = User.objects.get(email=email)
-#             EventMember.objects.get_or_create(event=event, user=member_user)
-#             send_notification(
-#                 recipient=member_user,
-#                 sender=request.user,
-#                 notification_type="member_added",
-#                 title="You were added to an event",
-#                 message=f"{request.user.name} added you to '{event.name}'.",
-#                 related_event=event,
-#             )
-#         except User.DoesNotExist:
-#             pass
-
-#     return Response({
-#         "message": "Event created successfully.",
-#         "event": EventSerializer(event, context={"request": request}).data,
-#     }, status=status.HTTP_201_CREATED)
-
-
-# @swagger_auto_schema(
-#     method="post",
-#     operation_summary="Create an event",
-#     operation_description="Free plan: max 3 events. Premium: unlimited.",
-#     request_body=CreateEventSerializer,
-#     responses={201: EventSerializer, 400: "Validation error", 403: "Event limit reached"},
-#     tags=["Events"],
-#     security=[{"Bearer": []}],
-# )
-# @api_view(["POST"])
-# @permission_classes([IsAuthenticated])
-# @authentication_classes([JWTAuthentication])
-# @parser_classes([MultiPartParser, FormParser])
-# def event_create(request):
-#     subscription = getattr(request.user, "subscription", None)
-#     is_premium = subscription and subscription.is_premium
-
-#     if not is_premium:
-#         with transaction.atomic():
-#             owned_count = (
-#                 Event.objects
-#                 .select_for_update()
-#                 .filter(created_by=request.user)
-#                 .count()
-#             )
-#             if owned_count >= 3:
-#                 return Response(
-#                     {"detail": "Free plan allows a maximum of 3 events. Upgrade to Premium for unlimited events."},
-#                     status=status.HTTP_403_FORBIDDEN,
-#                 )
-
-#     invite_members = request.data.getlist("invite_members")
-
-#     if len(invite_members) == 1 and isinstance(invite_members[0], str) and "," in invite_members[0]:
-#         emails = [e.strip() for e in invite_members[0].split(",") if e.strip()]
-#     else:
-#         emails = [e.strip() for e in invite_members if isinstance(e, str) and e.strip()]
-
-#     data = request.data
-
-#     serializer = CreateEventSerializer(data={
-#         **data,
-#         "invite_members": emails
-#     })
-
-#     if not serializer.is_valid():
-#         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-#     invite_emails = serializer.validated_data.pop("invite_members", [])
-
-#     event = serializer.save(created_by=request.user)
-
-#     EventMember.objects.create(event=event, user=request.user, role="admin")
-
-#     for email in invite_emails:
-#         try:
-#             member_user = User.objects.get(email=email)
-
-#             EventMember.objects.get_or_create(
-#                 event=event,
-#                 user=member_user
-#             )
-
-#             send_notification(
-#                 recipient=member_user,
-#                 sender=request.user,
-#                 notification_type="member_added",
-#                 title="You were added to an event",
-#                 message=f"{request.user.name} added you to '{event.name}'.",
-#                 related_event=event,
-#             )
-
-#         except User.DoesNotExist:
-#             continue
-
-#     return Response(
-#         {
-#             "message": "Event created successfully.",
-#             "event": EventSerializer(event, context={"request": request}).data,
-#         },
-#         status=status.HTTP_201_CREATED,
-#     )
 
 
 @swagger_auto_schema(
@@ -256,13 +73,9 @@ def event_list(request):
 )
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
-@authentication_classes([JWTAuthentication])
 @parser_classes([MultiPartParser, FormParser])
 def event_create(request):
 
-    # ---------------------------
-    # Handle invite members safely
-    # ---------------------------
     invite_members = request.data.getlist("invite_members")
 
     if len(invite_members) == 1 and "," in invite_members[0]:
@@ -311,7 +124,6 @@ def event_create(request):
 )
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
-@authentication_classes([JWTAuthentication])
 def event_details(request, event_id):
     event = get_object_or_404(Event, id=event_id)
 
@@ -425,7 +237,6 @@ def event_delete(request, event_id):
 )
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
-@authentication_classes([JWTAuthentication])
 def event_member_list(request, event_id):
     event = get_object_or_404(Event, id=event_id)
     members = event.members.select_related("user").exclude(user=event.created_by)
@@ -460,7 +271,6 @@ def event_member_list(request, event_id):
 )
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
-@authentication_classes([JWTAuthentication])
 def event_member_add(request, event_id):
     event = get_object_or_404(Event, id=event_id)
 
@@ -506,7 +316,6 @@ def event_member_add(request, event_id):
 )
 @api_view(["DELETE"])
 @permission_classes([IsAuthenticated])
-@authentication_classes([JWTAuthentication])
 def event_member_remove(request, event_id, member_id):
     event = get_object_or_404(Event, id=event_id, created_by=request.user)
     membership = get_object_or_404(EventMember, event=event, id=member_id)
@@ -524,7 +333,6 @@ def event_member_remove(request, event_id, member_id):
 )
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
-@authentication_classes([JWTAuthentication])
 def event_invite_link(request, event_id):
     event = get_object_or_404(Event, id=event_id)
 
@@ -559,7 +367,6 @@ def event_invite_link(request, event_id):
 )
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
-@authentication_classes([JWTAuthentication])
 def event_join_by_invite(request, token):
     event = get_object_or_404(Event, invite_token=token)
 
@@ -597,9 +404,6 @@ def event_join_by_invite(request, token):
     )
 
 
-# ═══════════════════════════════════════════════════════
-# TASK VIEWS
-# ═══════════════════════════════════════════════════════
 @swagger_auto_schema(
     method="get",
     operation_summary="List tasks in an event",
@@ -609,7 +413,6 @@ def event_join_by_invite(request, token):
 )
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
-@authentication_classes([JWTAuthentication])
 def task_list(request, event_id):
     event = get_object_or_404(Event, id=event_id)
 
@@ -630,9 +433,8 @@ def task_list(request, event_id):
 )
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
-@authentication_classes([JWTAuthentication])
 def my_task_list(request):
-    tasks = (
+    tasks = list(
         Task.objects
         .filter(assigned_to=request.user, status="pending")
         .select_related("event", "assigned_to")
@@ -640,7 +442,7 @@ def my_task_list(request):
     )
 
     return Response({
-        "pending_count": tasks.count(),
+        "pending_count": len(tasks),
         "tasks": MyTaskSerializer(tasks, many=True, context={"request": request}).data,
     })
 
@@ -656,7 +458,6 @@ def my_task_list(request):
 )
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
-@authentication_classes([JWTAuthentication])
 def task_create(request, event_id):
     event = get_object_or_404(Event, id=event_id)
 
@@ -715,7 +516,6 @@ def task_create(request, event_id):
 )
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
-@authentication_classes([JWTAuthentication])
 def task_details(request, event_id, task_id):
     event = get_object_or_404(Event, id=event_id)
 
@@ -740,7 +540,6 @@ def task_details(request, event_id, task_id):
 )
 @api_view(["PATCH"])
 @permission_classes([IsAuthenticated])
-@authentication_classes([JWTAuthentication])
 def task_update(request, event_id, task_id):
     event = get_object_or_404(Event, id=event_id)
 
@@ -795,7 +594,6 @@ def task_update(request, event_id, task_id):
 )
 @api_view(["DELETE"])
 @permission_classes([IsAuthenticated])
-@authentication_classes([JWTAuthentication])
 def task_delete(request, event_id, task_id):
     event = get_object_or_404(Event, id=event_id)
 
@@ -817,7 +615,6 @@ def task_delete(request, event_id, task_id):
 )
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
-@authentication_classes([JWTAuthentication])
 def task_mark_complete(request, event_id, task_id):
     event = get_object_or_404(Event, id=event_id)
 
@@ -853,7 +650,6 @@ def task_mark_complete(request, event_id, task_id):
 )
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
-@authentication_classes([JWTAuthentication])
 def task_comment_list(request, event_id, task_id):
     event = get_object_or_404(Event, id=event_id)
 
@@ -875,7 +671,6 @@ def task_comment_list(request, event_id, task_id):
 )
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
-@authentication_classes([JWTAuthentication])
 def task_comment_create(request, event_id, task_id):
     event = get_object_or_404(Event, id=event_id)
 

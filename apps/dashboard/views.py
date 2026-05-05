@@ -38,7 +38,6 @@ User = get_user_model()
 )
 @api_view(["GET"])
 @permission_classes([IsAuthenticated, IsAdminUser])
-@authentication_classes([JWTAuthentication])
 def dashboard_overview(request):
     data = {
         "total_users": User.objects.count(),
@@ -59,7 +58,6 @@ def dashboard_overview(request):
 )
 @api_view(["GET"])
 @permission_classes([IsAuthenticated, IsAdminUser])
-@authentication_classes([JWTAuthentication])
 def user_growth(request):
     six_months_ago = timezone.now() - timezone.timedelta(days=180)
     data = (
@@ -87,7 +85,6 @@ def user_growth(request):
 )
 @api_view(["GET"])
 @permission_classes([IsAuthenticated, IsAdminUser])
-@authentication_classes([JWTAuthentication])
 def subscription_growth(request):
     six_months_ago = timezone.now() - timezone.timedelta(days=180)
     data = (
@@ -124,7 +121,6 @@ def subscription_growth(request):
 )
 @api_view(["GET"])
 @permission_classes([IsAuthenticated, IsAdminUser])
-@authentication_classes([JWTAuthentication])
 def dashboard_events(request):
     search = request.query_params.get("search", "").strip()
     events = (
@@ -158,7 +154,6 @@ def dashboard_events(request):
 )
 @api_view(["GET"])
 @permission_classes([IsAuthenticated, IsAdminUser])
-@authentication_classes([JWTAuthentication])
 def dashboard_event_detail(request, event_id):
     event = get_object_or_404(
         Event.objects
@@ -219,7 +214,6 @@ def dashboard_event_detail(request, event_id):
 )
 @api_view(["DELETE"])
 @permission_classes([IsAuthenticated, IsAdminUser])
-@authentication_classes([JWTAuthentication])
 def dashboard_event_delete(request, event_id):
     event = get_object_or_404(Event, id=event_id)
     event.delete()
@@ -240,7 +234,6 @@ def dashboard_event_delete(request, event_id):
 )
 @api_view(["GET"])
 @permission_classes([IsAuthenticated, IsAdminUser])
-@authentication_classes([JWTAuthentication])
 def dashboard_users(request):
     search = request.query_params.get("search", "").strip()
     users = (
@@ -276,7 +269,6 @@ def dashboard_users(request):
 )
 @api_view(["GET"])
 @permission_classes([IsAuthenticated, IsAdminUser])
-@authentication_classes([JWTAuthentication])
 def dashboard_user_detail(request, user_id):
     user = get_object_or_404(
         User.objects
@@ -304,7 +296,6 @@ def dashboard_user_detail(request, user_id):
 )
 @api_view(["PATCH"])
 @permission_classes([IsAuthenticated, IsAdminUser])
-@authentication_classes([JWTAuthentication])
 def dashboard_user_set_status(request, user_id):
     user = get_object_or_404(User, id=user_id)
 
@@ -333,7 +324,6 @@ def dashboard_user_set_status(request, user_id):
 )
 @api_view(["DELETE"])
 @permission_classes([IsAuthenticated, IsAdminUser])
-@authentication_classes([JWTAuthentication])
 def dashboard_user_delete(request, user_id):
     user = get_object_or_404(User, id=user_id)
     user.delete()
@@ -351,7 +341,6 @@ def dashboard_user_delete(request, user_id):
 )
 @api_view(["POST"])
 @permission_classes([IsAuthenticated, IsAdminUser])
-@authentication_classes([JWTAuthentication])
 def dashboard_broadcast_send(request):
     serializer = BroadcastSendSerializer(data=request.data)
     if not serializer.is_valid():
@@ -388,7 +377,6 @@ def dashboard_broadcast_send(request):
 )
 @api_view(["GET"])
 @permission_classes([IsAuthenticated, IsAdminUser])
-@authentication_classes([JWTAuthentication])
 def dashboard_broadcast_list(request):
     broadcasts = (
         Notification.objects
