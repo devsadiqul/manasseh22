@@ -217,7 +217,7 @@ class TaskDetailSerializer(serializers.ModelSerializer):
 
 
 class CreateTaskSerializer(serializers.ModelSerializer):
-    assigned_to_email = serializers.EmailField(write_only=True, required=False, allow_null=True)
+    assigned_to_email = serializers.EmailField(write_only=True)
 
     class Meta:
         model = Task

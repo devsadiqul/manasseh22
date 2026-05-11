@@ -54,14 +54,15 @@ def verify_otp(user, otp_code, otp_type):
             is_used=False,
         ).latest("created_at")
     except OTPVerification.DoesNotExist:
-        return False, "Invalid OTP code."
+        return False, "Invalid OTP."
 
     if not otp.is_valid():
-        return False, "OTP has expired. Please request a new one."
+        return False, "OTP expired."
 
     otp.is_used = True
-    otp.save()
-    return True, otp
+    otp.save(update_fields=["is_used"])
+
+    return True, "OTP verified successfully."
 
 
 def get_tokens_for_user(user):

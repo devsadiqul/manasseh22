@@ -64,21 +64,34 @@ def register(request):
 @api_view(["POST"])
 def verify_email(request):
     serializer = OTPVerifySerializer(data=request.data)
-    if not serializer.is_valid():
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    serializer.is_valid(raise_exception=True)
 
     user = get_object_or_404(User, email=serializer.validated_data["email"])
 
     if user.is_email_verified:
-        return Response({"detail": "Email is already verified."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"detail": "Email already verified."}, status=status.HTTP_400_BAD_REQUEST)
 
-    success, result = verify_otp(user, serializer.validated_data["otp_code"], "email_verification")
+    success, message = verify_otp(
+        user,
+        serializer.validated_data["otp_code"],
+        "email_verification"
+    )
+
     if not success:
-        return Response({"detail": result}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"detail": message}, status=status.HTTP_400_BAD_REQUEST)
 
     user.is_email_verified = True
-    user.save()
-    return Response({"message": "Email verified successfully."}, status=status.HTTP_200_OK)
+    user.save(update_fields=["is_email_verified"])
+
+    tokens = get_tokens_for_user(user)
+    user_data = UserSerializer(user, context={"request": request}).data
+
+    return Response({
+        "message": message,
+        "access": tokens["access"],
+        "refresh": tokens["refresh"],
+        "user": user_data
+    }, status=status.HTTP_200_OK)
 
 
 @swagger_auto_schema(
